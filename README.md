@@ -81,29 +81,52 @@ Safety defaults are conservative: duplicate copy/move targets are preserved by r
 
 ## Screenshots
 
+These screenshots are captured from the real Qt desktop app using sanitized sample data.
+
 ### Monitors
 ![Monitors page](docs/screenshots/01-monitors.png)
 
-### Device Transfer
-![Device Transfer page](docs/screenshots/02-device-transfer.png)
-
 ### Symbolic Links
-![Links page](docs/screenshots/03-links.png)
+![Links page](docs/screenshots/02-links.png)
+
+### Device Transfer
+![Device Transfer page](docs/screenshots/03-device-transfer.png)
+
+### AI Rules
+![AI Rules page](docs/screenshots/04-ai-rules.png)
+
+### Scheduled Tasks
+![Scheduled Tasks page](docs/screenshots/05-scheduled-tasks.png)
 
 ### Cloud Sync
-![Cloud Sync page](docs/screenshots/04-cloud-sync.png)
+![Cloud Sync page](docs/screenshots/06-cloud-sync.png)
 
 ### AI Hub
-![AI Hub page](docs/screenshots/05-ai-hub.png)
+![AI Hub page](docs/screenshots/07-ai-hub.png)
+
+### AI Command
+![AI Command page](docs/screenshots/08-ai-command.png)
+
+### Workflow Automation
+![Workflow Automation page](docs/screenshots/09-workflow-automation.png)
+
+### Writing Assistant
+![Writing Assistant page](docs/screenshots/10-writing-assistant.png)
+
+### AI Search
+![AI Search page](docs/screenshots/11-ai-search.png)
 
 ### File Tools
-![File Tools page](docs/screenshots/06-file-tools.png)
+![File Tools page](docs/screenshots/12-file-tools.png)
+
+### Media Editors
+![Media Editors page](docs/screenshots/13-media-editors.png)
 
 ### Workspace
-![Workspace page](docs/screenshots/07-workspace.png)
+![Workspace page](docs/screenshots/14-workspace.png)
 
 ### Settings
-![Settings page](docs/screenshots/08-settings.png)
+![Settings page](docs/screenshots/15-settings.png)
 
 ---
 
