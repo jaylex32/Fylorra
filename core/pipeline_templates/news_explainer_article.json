@@ -1,0 +1,67 @@
+{
+  "metadata": {
+    "pipeline_id": "news_explainer_article",
+    "name": "News Explainer Article",
+    "description": "Create a publication-ready explainer article on a news topic with citations and a final title choice.",
+    "category": "news",
+    "author": "Fylorra",
+    "version": "1.0",
+    "created_date": "2026-02-08",
+    "tags": ["news", "article", "explainer", "editorial", "content"]
+  },
+  "global_config": {
+    "example_prompt": "Write a news explainer article about recent breakthroughs in battery technology."
+  },
+  "stages": [
+    {
+      "stage_id": "research",
+      "name": "Find Sources",
+      "agent": "research_agent",
+      "config": {
+        "approval_required": false,
+        "skip_if_previous_failed": true
+      }
+    },
+    {
+      "stage_id": "draft",
+      "name": "Draft Article",
+      "agent": "web_article_writing_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "validation",
+      "name": "Quality Review",
+      "agent": "validation_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "title_selection",
+      "name": "Choose Title",
+      "agent": "title_suggestion_agent",
+      "input_mapping": {
+        "document": "validation.improved_text",
+        "sources": "validation.sources",
+        "source_meta": "validation.source_meta"
+      },
+      "config": {
+        "approval_required": true,
+        "approval_message": "Choose the final article title (5 options) before exporting."
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "title_selection.document"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

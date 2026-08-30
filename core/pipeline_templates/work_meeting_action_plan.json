@@ -1,0 +1,67 @@
+{
+  "metadata": {
+    "pipeline_id": "work_meeting_action_plan",
+    "name": "Work Meeting Notes to Action Plan",
+    "description": "Turn rough meeting notes into a clear action plan with owners, priorities, and deadlines.",
+    "category": "business",
+    "author": "Fylorra",
+    "version": "1.0",
+    "created_date": "2026-02-08",
+    "tags": ["work", "meeting", "action plan", "team", "operations", "report"]
+  },
+  "global_config": {
+    "example_prompt": "Convert this sprint review meeting into an action plan with top priorities and follow-ups."
+  },
+  "stages": [
+    {
+      "stage_id": "research",
+      "name": "Structure Notes",
+      "agent": "research_agent",
+      "config": {
+        "approval_required": false,
+        "skip_if_previous_failed": true
+      }
+    },
+    {
+      "stage_id": "draft",
+      "name": "Draft Action Plan",
+      "agent": "writing_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "validation",
+      "name": "Quality Review",
+      "agent": "validation_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "title_selection",
+      "name": "Choose Title",
+      "agent": "title_suggestion_agent",
+      "input_mapping": {
+        "document": "validation.improved_text",
+        "sources": "validation.sources",
+        "source_meta": "validation.source_meta"
+      },
+      "config": {
+        "approval_required": true,
+        "approval_message": "Choose the final action-plan title (5 options) before exporting."
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "title_selection.document"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

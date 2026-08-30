@@ -1,0 +1,59 @@
+{
+  "metadata": {
+    "pipeline_id": "website_blog_article",
+    "name": "Website Blog Article",
+    "description": "Generate a professional blog article for your website, including references and final title selection.",
+    "category": "content",
+    "author": "Fylorra",
+    "version": "1.0",
+    "created_date": "2026-02-08",
+    "tags": ["website", "blog", "article", "content marketing", "seo"]
+  },
+  "global_config": {
+    "example_prompt": "Write a website blog article about practical AI tools for small business owners."
+  },
+  "stages": [
+    {
+      "stage_id": "research",
+      "name": "Find Sources",
+      "agent": "research_agent",
+      "config": {
+        "approval_required": false,
+        "skip_if_previous_failed": true
+      }
+    },
+    {
+      "stage_id": "draft",
+      "name": "Draft Article",
+      "agent": "web_article_writing_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "title_selection",
+      "name": "Choose Title",
+      "agent": "title_suggestion_agent",
+      "input_mapping": {
+        "document": "draft.document",
+        "sources": "draft.sources",
+        "source_meta": "draft.source_meta"
+      },
+      "config": {
+        "approval_required": true,
+        "approval_message": "Choose the final blog title (5 options) before exporting."
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "title_selection.document"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

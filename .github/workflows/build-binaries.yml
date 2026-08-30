@@ -1,0 +1,83 @@
+name: Build Binaries
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            artifact: Fylorra-Windows
+            binary: dist/Fylorra_Qt.exe
+          - name: macOS
+            os: macos-latest
+            artifact: Fylorra-macOS
+            binary: dist/Fylorra_Qt
+          - name: Linux
+            os: ubuntu-latest
+            artifact: Fylorra-Linux
+            binary: dist/Fylorra_Qt
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+
+      - name: Install Linux Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xfixes0
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      - name: Compile check
+        run: python -m py_compile main_qt.py qt_app/main_window.py qt_app/backend.py core/device_transfer.py utils/notification_manager.py
+
+      - name: Build with PyInstaller
+        run: pyinstaller --clean --noconfirm Fylorra_Qt.spec
+
+      - name: Verify binary exists
+        shell: bash
+        run: test -e "${{ matrix.binary }}"
+
+      - name: Package Windows artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Compress-Archive -Path "${{ matrix.binary }}" -DestinationPath "release/${{ matrix.artifact }}.zip" -Force
+
+      - name: Package Unix artifact
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p release
+          tar -czf "release/${{ matrix.artifact }}.tar.gz" -C dist Fylorra_Qt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release/*
+          if-no-files-found: error

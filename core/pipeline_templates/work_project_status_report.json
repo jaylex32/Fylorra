@@ -1,0 +1,67 @@
+{
+  "metadata": {
+    "pipeline_id": "work_project_status_report",
+    "name": "Work Project Status Report",
+    "description": "Create a polished project status report for teams, leadership, or clients with a final title selection step.",
+    "category": "business",
+    "author": "Fylorra",
+    "version": "1.0",
+    "created_date": "2026-02-08",
+    "tags": ["work", "project", "status", "report", "business", "team"]
+  },
+  "global_config": {
+    "example_prompt": "Create a weekly project status report for the website redesign, including progress, blockers, and next steps."
+  },
+  "stages": [
+    {
+      "stage_id": "research",
+      "name": "Collect Inputs",
+      "agent": "research_agent",
+      "config": {
+        "approval_required": false,
+        "skip_if_previous_failed": true
+      }
+    },
+    {
+      "stage_id": "draft",
+      "name": "Draft Report",
+      "agent": "writing_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "validation",
+      "name": "Quality Review",
+      "agent": "validation_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "title_selection",
+      "name": "Choose Title",
+      "agent": "title_suggestion_agent",
+      "input_mapping": {
+        "document": "validation.improved_text",
+        "sources": "validation.sources",
+        "source_meta": "validation.source_meta"
+      },
+      "config": {
+        "approval_required": true,
+        "approval_message": "Choose the final report title (5 options) before exporting."
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "title_selection.document"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

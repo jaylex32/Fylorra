@@ -1,0 +1,67 @@
+{
+  "metadata": {
+    "pipeline_id": "school_compare_contrast_essay",
+    "name": "School Compare & Contrast Essay",
+    "description": "Create a clean compare-and-contrast school essay with balanced points, citations, and final title selection.",
+    "category": "education",
+    "author": "Fylorra",
+    "version": "1.0",
+    "created_date": "2026-02-08",
+    "tags": ["school", "essay", "compare", "contrast", "education", "research"]
+  },
+  "global_config": {
+    "example_prompt": "Create a compare and contrast essay about renewable energy vs fossil fuels for high school."
+  },
+  "stages": [
+    {
+      "stage_id": "research",
+      "name": "Find Sources",
+      "agent": "research_agent",
+      "config": {
+        "approval_required": false,
+        "skip_if_previous_failed": true
+      }
+    },
+    {
+      "stage_id": "draft",
+      "name": "Draft Essay",
+      "agent": "school_assignment_writing_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "validation",
+      "name": "Final Review",
+      "agent": "validation_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "title_selection",
+      "name": "Choose Title",
+      "agent": "title_suggestion_agent",
+      "input_mapping": {
+        "document": "validation.improved_text",
+        "sources": "validation.sources",
+        "source_meta": "validation.source_meta"
+      },
+      "config": {
+        "approval_required": true,
+        "approval_message": "Choose the final essay title (5 options) before exporting."
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "title_selection.document"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

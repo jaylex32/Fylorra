@@ -1,0 +1,54 @@
+{
+  "metadata": {
+    "pipeline_id": "market_opportunity",
+    "name": "Market Opportunity Analyzer",
+    "description": "Identify and rank market opportunities with scoring and recommendations.",
+    "category": "strategy",
+    "author": "Fylorra",
+    "version": "1.3",
+    "created_date": "2026-01-02",
+    "tags": ["market", "opportunity", "analysis", "strategy"]
+  },
+  "global_config": {
+    "example_prompt": "Analyze market opportunity for AI customer service in healthcare and BFSI."
+  },
+  "stages": [
+    {
+      "stage_id": "discovery",
+      "name": "Discovery",
+      "agent": "market_research_agent",
+      "config": {
+        "approval_required": false,
+        "skip_if_previous_failed": true
+      }
+    },
+    {
+      "stage_id": "scoring",
+      "name": "Scoring & Analysis",
+      "agent": "market_writing_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "validation",
+      "name": "Validation",
+      "agent": "validation_agent",
+      "config": {
+        "approval_required": true,
+        "approval_message": "Review the validated opportunity report before exporting."
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "validation.improved_text"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

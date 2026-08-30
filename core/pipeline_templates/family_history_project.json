@@ -1,0 +1,69 @@
+{
+  "metadata": {
+    "pipeline_id": "family_history_project",
+    "name": "School Assignment",
+    "description": "Parent-and-student friendly workflow for history projects, homework, essays, and class presentations. Facts are checked before writing.",
+    "category": "education",
+    "author": "Fylorra",
+    "version": "1.6",
+    "created_date": "2026-02-07",
+    "tags": ["history", "education", "school", "homework", "essay", "fact-check", "parents"]
+  },
+  "global_config": {
+    "example_prompt": "Create a school history essay about the Harlem Renaissance for middle school students. Keep it clear and fully cited."
+  },
+  "stages": [
+    {
+      "stage_id": "research",
+      "name": "Find Sources",
+      "agent": "history_research_agent",
+      "config": {
+        "approval_required": false,
+        "skip_if_previous_failed": true
+      }
+    },
+    {
+      "stage_id": "fact_check",
+      "name": "Check Facts",
+      "agent": "history_fact_check_agent",
+      "agent_config": {
+        "skip_rewrite": true,
+        "structured_mode": true
+      },
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "draft",
+      "name": "Write Assignment",
+      "agent": "family_history_writing_agent",
+      "agent_config": {
+        "structured_output": true
+      },
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "validation",
+      "name": "Final Review",
+      "agent": "validation_agent",
+      "config": {
+        "approval_required": true,
+        "approval_message": "Review the fact-checked school assignment before exporting."
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "draft.document"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

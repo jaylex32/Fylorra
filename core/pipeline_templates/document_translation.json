@@ -1,0 +1,36 @@
+{
+  "metadata": {
+    "pipeline_id": "document_translation",
+    "name": "Document Translation",
+    "description": "Translate a document and export it in multiple formats.",
+    "category": "translation",
+    "author": "Fylorra",
+    "version": "1.1",
+    "created_date": "2026-01-02",
+    "tags": ["translate", "export"]
+  },
+  "global_config": {
+    "example_prompt": "Translate this policy brief from English to Spanish and keep headings."
+  },
+  "stages": [
+    {
+      "stage_id": "translation",
+      "name": "Translation",
+      "agent": "translation_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "translation.document"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

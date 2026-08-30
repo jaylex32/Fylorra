@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+  <defs>
+    <linearGradient id="hexBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2E5BB8"/>
+      <stop offset="50%" stop-color="#1A3D7A"/>
+      <stop offset="100%" stop-color="#0D1F3D"/>
+    </linearGradient>
+
+    <linearGradient id="hexBorder" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6FB8FF"/>
+      <stop offset="50%" stop-color="#3A7FD5"/>
+      <stop offset="100%" stop-color="#1E4A8C"/>
+    </linearGradient>
+
+    <radialGradient id="flowGlow" cx="50%" cy="50%">
+      <stop offset="0%" stop-color="#4A9EFF" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#1E5BB8" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feOffset in="b" dx="0" dy="3" result="offsetBlur"/>
+      <feFlood flood-color="#000000" flood-opacity="0.35"/>
+      <feComposite in2="offsetBlur" operator="in"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Network/Grid Hexagon Icon -->
+  <g transform="translate(0, 20)" filter="url(#shadow)">
+    <path d="M150 30 L230 80 L230 180 L150 230 L70 180 L70 80 Z"
+          fill="url(#hexBorder)" stroke="#5BA3FF" stroke-width="3"/>
+    <path d="M150 38 L224 84 L224 176 L150 222 L76 176 L76 84 Z"
+          fill="url(#hexBg)"/>
+    <ellipse cx="150" cy="130" rx="80" ry="80" fill="url(#flowGlow)"/>
+
+    <!-- Network nodes and connections -->
+    <g filter="url(#glow)">
+      <circle cx="150" cy="90" r="8" fill="#6FB8FF"/>
+      <circle cx="120" cy="120" r="8" fill="#5AA8FF"/>
+      <circle cx="180" cy="120" r="8" fill="#5AA8FF"/>
+      <circle cx="110" cy="160" r="8" fill="#4A9EFF"/>
+      <circle cx="150" cy="160" r="8" fill="#4A9EFF"/>
+      <circle cx="190" cy="160" r="8" fill="#4A9EFF"/>
+
+      <line x1="150" y1="90" x2="120" y2="120" stroke="#6FB8FF" stroke-width="3" opacity="0.6"/>
+      <line x1="150" y1="90" x2="180" y2="120" stroke="#6FB8FF" stroke-width="3" opacity="0.6"/>
+      <line x1="120" y1="120" x2="110" y2="160" stroke="#5AA8FF" stroke-width="3" opacity="0.6"/>
+      <line x1="120" y1="120" x2="150" y2="160" stroke="#5AA8FF" stroke-width="3" opacity="0.6"/>
+      <line x1="180" y1="120" x2="150" y2="160" stroke="#5AA8FF" stroke-width="3" opacity="0.6"/>
+      <line x1="180" y1="120" x2="190" y2="160" stroke="#5AA8FF" stroke-width="3" opacity="0.6"/>
+    </g>
+
+    <path d="M150 38 L224 84 L224 176 L150 222 L76 176 L76 84 Z"
+          fill="none" stroke="#7AB8FF" stroke-width="2" opacity="0.4"/>
+  </g>
+</svg>

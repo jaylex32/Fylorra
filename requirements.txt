@@ -1,0 +1,74 @@
+# Fylorra - Requirements
+# Professional Folder Monitoring & Automation Tool
+
+# GUI Framework
+customtkinter>=5.2.0
+
+# Qt GUI (next-generation UI)
+PySide6>=6.6.0
+
+# File System Monitoring
+watchdog>=3.0.0
+
+# Windows Notifications
+winotify>=1.1.0; sys_platform == "win32"
+
+# System Tray
+pystray>=0.19.5
+Pillow>=10.0.0
+
+# SVG Icon Support
+cairosvg>=2.8.0
+
+# Windows Shell Operations (optional for recycle bin)
+pywin32>=306; sys_platform == "win32"
+
+# AI/ML - Vision Language Model
+llama-cpp-python>=0.2.0
+huggingface-hub>=0.20.0
+requests>=2.31.0
+msal>=1.26.0
+
+# Local Search / PDF text extraction (optional but recommended for AI Search)
+pymupdf>=1.24.0
+pypdf>=5.0.0
+
+# Office file text extraction (optional; improves AI Search on DOCX/XLSX/PPTX)
+python-docx>=1.1.0
+openpyxl>=3.1.0
+python-pptx>=0.6.23
+python-slugify>=8.0.4
+nameparser>=1.1.3
+python-Levenshtein>=0.26.1
+
+# Media conversion/editing (managed ffmpeg binary)
+imageio-ffmpeg>=0.6.0
+
+# Optional: PDF watermark/text overlay (pure Python)
+reportlab>=4.0.0
+
+# Safe delete to recycle bin (optional fallback used if available)
+Send2Trash>=1.8.3
+
+# Tag editing / cover art embedding
+mutagen>=1.47.0
+
+# Archives (optional, enables 7z / rar extraction)
+py7zr>=0.21.0
+rarfile>=4.2
+
+# Optional: Drag & drop (used by Media Editors and future drop zones)
+tkinterdnd2>=0.4.3
+
+# OCR (offline)
+rapidocr-onnxruntime>=1.4.4
+
+# Cloud Sync (OneDrive / Google Drive)
+google-auth>=2.30.0
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.130.0
+
+# Automation Workflow Dependencies
+pydantic>=2.12.5
+instructor>=1.0.0
+httpx>=0.27.0

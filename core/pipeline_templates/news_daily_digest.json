@@ -1,0 +1,59 @@
+{
+  "metadata": {
+    "pipeline_id": "news_daily_digest",
+    "name": "News Daily Digest",
+    "description": "Generate a high-signal daily news digest with prioritized updates and clean source links.",
+    "category": "news",
+    "author": "Fylorra",
+    "version": "1.0",
+    "created_date": "2026-02-08",
+    "tags": ["news", "digest", "daily", "briefing", "monitoring"]
+  },
+  "global_config": {
+    "example_prompt": "Topics: AI, Cybersecurity, Energy | Frequency: Daily"
+  },
+  "stages": [
+    {
+      "stage_id": "aggregation",
+      "name": "Find News",
+      "agent": "briefing_research_agent",
+      "config": {
+        "approval_required": false,
+        "skip_if_previous_failed": true
+      }
+    },
+    {
+      "stage_id": "briefing",
+      "name": "Write Digest",
+      "agent": "briefing_writing_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "title_selection",
+      "name": "Choose Title",
+      "agent": "title_suggestion_agent",
+      "input_mapping": {
+        "document": "briefing.document",
+        "sources": "briefing.sources",
+        "source_meta": "briefing.source_meta"
+      },
+      "config": {
+        "approval_required": true,
+        "approval_message": "Choose the final digest title (5 options) before exporting."
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "title_selection.document"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

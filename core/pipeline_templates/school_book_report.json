@@ -1,0 +1,67 @@
+{
+  "metadata": {
+    "pipeline_id": "school_book_report",
+    "name": "School Book Report",
+    "description": "Generate a complete school book report with source-backed context, organized sections, and final title selection.",
+    "category": "education",
+    "author": "Fylorra",
+    "version": "1.0",
+    "created_date": "2026-02-08",
+    "tags": ["school", "book report", "literature", "education", "assignment"]
+  },
+  "global_config": {
+    "example_prompt": "Create a school book report on The Giver by Lois Lowry for 8th grade."
+  },
+  "stages": [
+    {
+      "stage_id": "research",
+      "name": "Find Sources",
+      "agent": "research_agent",
+      "config": {
+        "approval_required": false,
+        "skip_if_previous_failed": true
+      }
+    },
+    {
+      "stage_id": "draft",
+      "name": "Write Report",
+      "agent": "school_assignment_writing_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "validation",
+      "name": "Final Review",
+      "agent": "validation_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "title_selection",
+      "name": "Choose Title",
+      "agent": "title_suggestion_agent",
+      "input_mapping": {
+        "document": "validation.improved_text",
+        "sources": "validation.sources",
+        "source_meta": "validation.source_meta"
+      },
+      "config": {
+        "approval_required": true,
+        "approval_message": "Choose the final report title (5 options) before exporting."
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "title_selection.document"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "metadata": {
+    "pipeline_id": "research_to_report",
+    "name": "Research to Report",
+    "description": "Turn research notes into a professional report and export it.",
+    "category": "research",
+    "author": "Fylorra",
+    "version": "1.1",
+    "created_date": "2026-01-02",
+    "tags": ["research", "report", "export"]
+  },
+  "global_config": {
+    "example_prompt": "Research AI trends in 2026 and create a professional report."
+  },
+  "stages": [
+    {
+      "stage_id": "research",
+      "name": "Research",
+      "agent": "research_agent",
+      "config": {
+        "approval_required": false,
+        "skip_if_previous_failed": true
+      }
+    },
+    {
+      "stage_id": "writing",
+      "name": "Writing",
+      "agent": "writing_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "validation",
+      "name": "Validation",
+      "agent": "validation_agent",
+      "config": {
+        "approval_required": true,
+        "approval_message": "Review the validated document before exporting."
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "validation.improved_text"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

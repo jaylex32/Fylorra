@@ -1,0 +1,45 @@
+{
+  "metadata": {
+    "pipeline_id": "executive_briefing",
+    "name": "Executive Intelligence Briefing",
+    "description": "Personalized daily/weekly intelligence digest with prioritized updates.",
+    "category": "monitoring",
+    "author": "Fylorra",
+    "version": "1.3",
+    "created_date": "2026-01-02",
+    "tags": ["briefing", "news", "monitoring"]
+  },
+  "global_config": {
+    "example_prompt": "Topics: AI, Renewable Energy | Companies: NVIDIA, Tesla | Frequency: Daily"
+  },
+  "stages": [
+    {
+      "stage_id": "aggregation",
+      "name": "Aggregation",
+      "agent": "briefing_research_agent",
+      "config": {
+        "approval_required": false,
+        "skip_if_previous_failed": true
+      }
+    },
+    {
+      "stage_id": "briefing",
+      "name": "Briefing",
+      "agent": "briefing_writing_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "briefing.document"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}

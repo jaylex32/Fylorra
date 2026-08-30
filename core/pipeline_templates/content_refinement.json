@@ -1,0 +1,45 @@
+{
+  "metadata": {
+    "pipeline_id": "content_refinement",
+    "name": "Content Refinement",
+    "description": "Improve writing quality, validate, and export.",
+    "category": "content",
+    "author": "Fylorra",
+    "version": "1.1",
+    "created_date": "2026-01-02",
+    "tags": ["writing", "validation", "export"]
+  },
+  "global_config": {
+    "example_prompt": "Polish this proposal so it sounds executive-friendly and concise."
+  },
+  "stages": [
+    {
+      "stage_id": "writing",
+      "name": "Writing",
+      "agent": "writing_agent",
+      "config": {
+        "approval_required": false
+      }
+    },
+    {
+      "stage_id": "validation",
+      "name": "Validation",
+      "agent": "validation_agent",
+      "config": {
+        "approval_required": true,
+        "approval_message": "Review the validated document before exporting."
+      }
+    },
+    {
+      "stage_id": "export",
+      "name": "Export",
+      "agent": "export_agent",
+      "input_mapping": {
+        "document": "validation.improved_text"
+      },
+      "config": {
+        "approval_required": false
+      }
+    }
+  ]
+}
