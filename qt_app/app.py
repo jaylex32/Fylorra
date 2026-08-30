@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import sys
+import traceback
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QRectF, QSize, QByteArray
@@ -10,6 +13,26 @@ from PySide6.QtWidgets import QApplication, QSplashScreen
 from PySide6.QtSvg import QSvgRenderer
 
 from core.branding import APP_NAME, APP_ORGANIZATION
+
+
+def _install_crash_logger() -> None:
+    def _log_exception(exc_type, exc, tb) -> None:
+        try:
+            base = Path.home() / ".fylorra" / "logs"
+            base.mkdir(parents=True, exist_ok=True)
+            log_path = base / "crash.log"
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            text = "".join(traceback.format_exception(exc_type, exc, tb))
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(f"\n[{stamp}] Unhandled exception\n{text}\n")
+        except Exception:
+            pass
+        try:
+            sys.__excepthook__(exc_type, exc, tb)
+        except Exception:
+            pass
+
+    sys.excepthook = _log_exception
 
 
 def _load_svg_renderer(svg_path: Path, *, viewbox: str | None = None) -> QSvgRenderer:
@@ -105,6 +128,7 @@ def _build_splash_pixmap() -> QPixmap | None:
 
 
 def run(argv: list[str]) -> int:
+    _install_crash_logger()
     # High-DPI settings should be applied before QApplication is constructed.
     try:
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)

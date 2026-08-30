@@ -17533,7 +17533,7 @@ class _QtAiHubWorker(QObject):
                 try:
                     ok = bool(ai.ensure_model_downloaded(dl_cb))
                 except Exception as e:
-                    self.error.emit(str(e))
+                    self.error.emit(f"Model download failed: {e}")
                     return
                 if not ok:
                     self.error.emit("Model download failed.")
@@ -17546,7 +17546,7 @@ class _QtAiHubWorker(QObject):
                 try:
                     ai.load_model(load_cb)
                 except Exception as e:
-                    self.error.emit(str(e))
+                    self.error.emit(f"Model load failed: {e}")
                     return
 
             from core.bulk_ai_processor import BulkAIProcessor, ProcessingOptions, ProcessingMode
@@ -18837,7 +18837,11 @@ class _QtAutoCategorizeWorker(QObject):
                     self.status.emit(message)
                     self.progress.emit(0.1 * float(progress))
 
-                ok = bool(ai.ensure_model_downloaded(dl_cb))
+                try:
+                    ok = bool(ai.ensure_model_downloaded(dl_cb))
+                except Exception as e:
+                    self.error.emit(f"Model download failed: {e}")
+                    return
                 if not ok:
                     self.error.emit(str(getattr(ai, "load_error", "") or "Model download failed."))
                     return
@@ -18846,7 +18850,11 @@ class _QtAutoCategorizeWorker(QObject):
                     self.status.emit(message)
                     self.progress.emit(0.1 + 0.2 * float(progress))
 
-                ai.load_model(load_cb)
+                try:
+                    ai.load_model(load_cb)
+                except Exception as e:
+                    self.error.emit(f"Model load failed: {e}")
+                    return
 
             from core.enhanced_categorizer import EnhancedCategorizer
 
@@ -19342,7 +19350,11 @@ class _QtSmartRenameWorker(QObject):
                     self.status.emit(message)
                     self.progress.emit(0.1 * float(progress))
 
-                ok = bool(ai.ensure_model_downloaded(dl_cb))
+                try:
+                    ok = bool(ai.ensure_model_downloaded(dl_cb))
+                except Exception as e:
+                    self.error.emit(f"Model download failed: {e}")
+                    return
                 if not ok:
                     self.error.emit(str(getattr(ai, "load_error", "") or "Model download failed."))
                     return
@@ -19351,7 +19363,11 @@ class _QtSmartRenameWorker(QObject):
                     self.status.emit(message)
                     self.progress.emit(0.1 + 0.2 * float(progress))
 
-                ai.load_model(load_cb)
+                try:
+                    ai.load_model(load_cb)
+                except Exception as e:
+                    self.error.emit(f"Model load failed: {e}")
+                    return
 
             # Determine file filter.
             from core.bulk_ai_processor import BulkAIProcessor
@@ -19814,7 +19830,11 @@ class _QtContentAnalysisWorker(QObject):
                     self.status.emit(message)
                     self.progress.emit(0.1 * float(progress))
 
-                ok = bool(ai.ensure_model_downloaded(dl_cb))
+                try:
+                    ok = bool(ai.ensure_model_downloaded(dl_cb))
+                except Exception as e:
+                    self.error.emit(f"Model download failed: {e}")
+                    return
                 if not ok:
                     self.error.emit(str(getattr(ai, "load_error", "") or "Model download failed."))
                     return
@@ -19823,7 +19843,11 @@ class _QtContentAnalysisWorker(QObject):
                     self.status.emit(message)
                     self.progress.emit(0.1 + 0.2 * float(progress))
 
-                ai.load_model(load_cb)
+                try:
+                    ai.load_model(load_cb)
+                except Exception as e:
+                    self.error.emit(f"Model load failed: {e}")
+                    return
 
             from core.bulk_ai_processor import BulkAIProcessor, ProcessingOptions, ProcessingMode
             from core.semantic_analyzer import SemanticAnalyzer
@@ -20252,7 +20276,11 @@ class _QtAIModelLoadWorker(QObject):
                 self.status.emit(message)
                 self.progress.emit(0.0 + 0.4 * float(progress))
 
-            ok = bool(ai.ensure_model_downloaded(dl_cb))
+            try:
+                ok = bool(ai.ensure_model_downloaded(dl_cb))
+            except Exception as e:
+                self.error.emit(f"Model download failed: {e}")
+                return
             if not ok:
                 err = str(getattr(ai, "load_error", "") or "").strip()
                 self.error.emit(err or "Model download failed.")
@@ -20262,7 +20290,11 @@ class _QtAIModelLoadWorker(QObject):
                 self.status.emit(message)
                 self.progress.emit(0.4 + 0.6 * float(progress))
 
-            ai.load_model(load_cb)
+            try:
+                ai.load_model(load_cb)
+            except Exception as e:
+                self.error.emit(f"Model load failed: {e}")
+                return
             if bool(getattr(ai, "is_ready", False)):
                 self.finished.emit(True)
                 return
@@ -20321,6 +20353,7 @@ class _QtAIModelLoadDialog(QDialog):
         self.worker.finished.connect(self._thread.quit)
         self.worker.error.connect(self._thread.quit)
         self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.finished.connect(self.worker.deleteLater)
         self._thread.start()
 
     def _on_finished(self, ok: bool):
@@ -20344,8 +20377,16 @@ class _QtAIModelLoadDialog(QDialog):
         self.btn_close.clicked.connect(self.reject)
 
     def _on_error(self, msg: str):
-        QMessageBox.critical(self, "AI Model", msg)
-        self.reject()
+        clean = (msg or "Failed to prepare the AI model.").strip()
+        self.status.setText("Failed.\n\n" + clean)
+        self.btn_close.setVisible(True)
+        self.btn_close.setEnabled(True)
+        self.btn_close.setText("Close")
+        try:
+            self.btn_close.clicked.disconnect()
+        except Exception:
+            pass
+        self.btn_close.clicked.connect(self.reject)
 
 
 class _QtAICommandPlanWorker(QObject):

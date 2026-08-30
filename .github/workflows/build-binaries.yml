@@ -24,19 +24,19 @@ jobs:
           - name: Windows x64
             os: windows-latest
             artifact: Fylorra-Windows-x64
-            binary: dist/Fylorra_Qt.exe
+            binary: dist/Fylorra.exe
           - name: Linux x64
             os: ubuntu-latest
             artifact: Fylorra-Linux-x64
-            binary: dist/Fylorra_Qt
+            binary: dist/Fylorra
           - name: macOS Apple Silicon
             os: macos-15
             artifact: Fylorra-macOS-arm64
-            binary: dist/Fylorra_Qt
+            binary: dist/Fylorra
           - name: macOS Intel
             os: macos-15-intel
             artifact: Fylorra-macOS-x64
-            binary: dist/Fylorra_Qt
+            binary: dist/Fylorra
 
     steps:
       - name: Checkout
@@ -64,7 +64,7 @@ jobs:
         run: python -m py_compile main_qt.py qt_app/main_window.py qt_app/backend.py core/device_transfer.py utils/notification_manager.py
 
       - name: Build with PyInstaller
-        run: pyinstaller --clean --noconfirm Fylorra_Qt.spec
+        run: pyinstaller --clean --noconfirm Fylorra.spec
 
       - name: Verify binary exists
         shell: bash
@@ -82,7 +82,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          tar -czf "release/${{ matrix.artifact }}.tar.gz" -C dist Fylorra_Qt
+          tar -czf "release/${{ matrix.artifact }}.tar.gz" -C dist Fylorra
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
