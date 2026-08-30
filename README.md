@@ -138,13 +138,14 @@ These screenshots are captured from the real Qt desktop app using sanitized samp
 
 ### Download Binaries
 
-GitHub Actions builds desktop binaries for:
+Download the latest release from GitHub Releases. Release builds include:
 
-- Windows: `Fylorra-Windows`
-- macOS: `Fylorra-macOS`
-- Linux: `Fylorra-Linux`
+- Windows x64: `Fylorra-Windows-x64.zip`
+- Linux x64: `Fylorra-Linux-x64.tar.gz`
+- macOS Apple Silicon: `Fylorra-macOS-arm64.tar.gz`
+- macOS Intel: `Fylorra-macOS-x64.tar.gz`
 
-Open the latest **Build Binaries** workflow run in GitHub Actions and download the matching artifact.
+Development builds are also available from the **Build Binaries** workflow artifacts.
 
 ### Install Dependencies
 
