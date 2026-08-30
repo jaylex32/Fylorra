@@ -1,14 +1,19 @@
 # Fylorra
 
-**File intake automation for Windows**
+**File intake automation for Windows, macOS, and Linux**
 
-Fylorra watches the folders where files arrive, then routes, renames, links, converts, archives, and reports on them with safe local automation. The product focus is simple: make Downloads, scanners, cameras, cloud sync folders, and work drop zones stay organized without users babysitting files.
+Fylorra watches the folders where files arrive, then routes, renames, links, transfers, converts, archives, and reports on them with safe local automation. The product focus is simple: make Downloads, scanners, cameras, cloud sync folders, and work drop zones stay organized without users babysitting files.
 
 The app still contains useful tools, but the core experience should be one workflow: **intake a file, decide what it is, take a reversible action, and leave an audit trail.**
 
 ---
 
 ## ✨ Key Features
+
+### 🖥️ **Modern Qt Desktop App**
+- Cross-platform Qt interface for Windows, macOS, and Linux
+- Dark/light theme support
+- Clean navigation for monitoring, links, transfers, AI tools, cloud sync, file tools, and settings
 
 ### 🔔 **Windows Native Notifications**
 - **Real-time toast notifications** for file events (create, modify, delete, move)
@@ -41,7 +46,7 @@ Safety defaults are conservative: duplicate copy/move targets are preserved by r
 - Handles high-frequency file events efficiently
 
 ### 🎨 **Modern 2025 UI**
-- Clean, professional interface built with CustomTkinter
+- Clean, professional interface built with Qt/PySide6
 - Dark/Light theme support
 - Smooth animations and modern design
 - Real-time activity dashboard
@@ -57,6 +62,13 @@ Safety defaults are conservative: duplicate copy/move targets are preserved by r
 - Upload/download files (initial foundation for full sync)
 - Setup guide: `docs/CLOUD_SYNC.md`
 
+### 🔁 **Device Transfer**
+- Send files/folders directly between two trusted Fylorra devices
+- LAN device discovery plus manual address/port/code connection
+- Works over local networks, VPNs, private tunnels, or port-forwarded remote addresses
+- Receiver access code is required for every upload and is never broadcast
+- Setup guide: `docs/DEVICE_TRANSFER.md`
+
 ### 💾 **Persistent Configuration & Logging**
 - All settings and monitors saved automatically
 - Resume monitoring on app restart
@@ -67,11 +79,49 @@ Safety defaults are conservative: duplicate copy/move targets are preserved by r
 
 ---
 
+## Screenshots
+
+### Monitors
+![Monitors page](docs/screenshots/01-monitors.png)
+
+### Device Transfer
+![Device Transfer page](docs/screenshots/02-device-transfer.png)
+
+### Symbolic Links
+![Links page](docs/screenshots/03-links.png)
+
+### Cloud Sync
+![Cloud Sync page](docs/screenshots/04-cloud-sync.png)
+
+### AI Hub
+![AI Hub page](docs/screenshots/05-ai-hub.png)
+
+### File Tools
+![File Tools page](docs/screenshots/06-file-tools.png)
+
+### Workspace
+![Workspace page](docs/screenshots/07-workspace.png)
+
+### Settings
+![Settings page](docs/screenshots/08-settings.png)
+
+---
+
 ## 🚀 Installation
 
 ### Prerequisites
-- **Python 3.8+**
-- **Windows 10/11**
+- **Python 3.10+** for source runs
+- **Windows 10/11, macOS, or Linux**
+
+### Download Binaries
+
+GitHub Actions builds desktop binaries for:
+
+- Windows: `Fylorra-Windows`
+- macOS: `Fylorra-macOS`
+- Linux: `Fylorra-Linux`
+
+Open the latest **Build Binaries** workflow run in GitHub Actions and download the matching artifact.
 
 ### Install Dependencies
 
@@ -90,7 +140,7 @@ pip install -r requirements.txt
 ### Run the Application
 
 ```bash
-python main.py
+python main_qt.py
 ```
 
 ---

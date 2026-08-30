@@ -44,3 +44,4 @@ desktop.ini
 *.backup2
 conversion_log.txt
 tmp_ai_tools_extracted.txt
+*.BAK
