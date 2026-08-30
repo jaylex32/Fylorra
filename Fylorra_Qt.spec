@@ -5,13 +5,16 @@
 # AI models are NOT bundled (downloaded to ~/.fylorra/ai_models).
 
 import os
+import sys
 from pathlib import Path
-
-from build_tools.fetch_ffmpeg_tools import ensure_ffmpeg_tools
 
 
 _spec_file = globals().get("__file__")
 root = Path(_spec_file).resolve().parent if _spec_file else Path.cwd()
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+
+from build_tools.fetch_ffmpeg_tools import ensure_ffmpeg_tools
 icon_path = root / "assets" / "fylorra.ico"
 exe_icon = [str(icon_path)] if os.name == "nt" and icon_path.exists() else None
 
