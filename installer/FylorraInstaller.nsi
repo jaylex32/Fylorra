@@ -6,14 +6,14 @@
 !define APP_PUBLISHER "Fylorra"
 !define APP_EXE "Fylorra.exe"
 !define APP_ID "Fylorra.FileIntakeAutomation"
-!define SOURCE_EXE "${__FILEDIR__}\..\dist\Fylorra.exe"
-!define ICON_FILE "${__FILEDIR__}\..\assets\fylorra.ico"
-!define SIDEBAR_BITMAP "${__FILEDIR__}\installer_sidebar.bmp"
+!define SOURCE_EXE "..\dist\Fylorra.exe"
+!define ICON_FILE "..\assets\fylorra.ico"
+!define SIDEBAR_BITMAP "installer_sidebar.bmp"
 !define INSTALL_DIR "$LOCALAPPDATA\Programs\Fylorra"
 
 Unicode true
 Name "${APP_NAME}"
-OutFile "${__FILEDIR__}\..\release\Fylorra-Windows-x64-Setup.exe"
+OutFile "..\release\Fylorra-Windows-x64-Setup.exe"
 InstallDir "${INSTALL_DIR}"
 InstallDirRegKey HKCU "Software\${APP_ID}" "InstallDir"
 RequestExecutionLevel user

@@ -92,7 +92,9 @@ jobs:
           }
           $version = $version.TrimStart("v")
           python installer/create_installer_assets.py
-          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" "/DVERSION=$version" installer/FylorraInstaller.nsi
+          Push-Location installer
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" "/DVERSION=$version" FylorraInstaller.nsi
+          Pop-Location
 
       - name: Package Unix artifact
         if: runner.os != 'Windows'
