@@ -68,6 +68,23 @@ class SettingsManager:
             data["ai_performance_profile_version"] = 2
             changed = True
 
+        # Stable release guard: keep local AI model loading on CPU-safe settings.
+        # Users can download models without native GPU backend crashes.
+        try:
+            current_gpu = int(data.get("ai_gpu_layers", 0) or 0)
+        except Exception:
+            current_gpu = 0
+        if current_gpu != 0:
+            data["ai_gpu_layers"] = 0
+            changed = True
+        current_flash = str(data.get("ai_flash_attn_type", "disabled") or "disabled").strip().lower()
+        if current_flash not in ("disabled", "0", "off", "false"):
+            data["ai_flash_attn_type"] = "disabled"
+            changed = True
+        if data.get("ai_performance_profile_version") != 3:
+            data["ai_performance_profile_version"] = 3
+            changed = True
+
         if changed:
             try:
                 with open(self.settings_file, 'w') as f:
@@ -132,7 +149,7 @@ class SettingsManager:
             "ai_image_size": 512,
             # llama-cpp FlashAttention: "auto" | "enabled" | "disabled"
             "ai_flash_attn_type": "disabled",
-            "ai_performance_profile_version": 2,
+            "ai_performance_profile_version": 3,
             "ai_rename_max_keywords": 8,
             # Writing Assistant: which model to use ("auto" | "text" | "vision")
             "writing_assistant_model_preference": "text",

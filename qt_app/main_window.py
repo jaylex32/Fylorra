@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import html
 import uuid
+import queue
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7994,7 +7996,7 @@ class FylorraQtMainWindow(QMainWindow):
 
         # GPU layers
         self._st_ai_gpu_layers = QSlider(Qt.Horizontal)
-        self._st_ai_gpu_layers.setRange(0, 35)
+        self._st_ai_gpu_layers.setRange(0, 0)
         self._st_ai_gpu_layers.setValue(int(get_setting("ai_gpu_layers", 0) or 0))
         gpu_value = QLabel(str(self._st_ai_gpu_layers.value()))
         gpu_row = QHBoxLayout()
@@ -8043,7 +8045,7 @@ class FylorraQtMainWindow(QMainWindow):
 
         # FlashAttention (llama-cpp)
         self._st_ai_flash_attn = QComboBox()
-        self._st_ai_flash_attn.addItem("Auto (recommended)", "auto")
+        self._st_ai_flash_attn.addItem("Auto", "auto")
         self._st_ai_flash_attn.addItem("Enabled", "enabled")
         self._st_ai_flash_attn.addItem("Disabled", "disabled")
         cur_fa = get_setting("ai_flash_attn_type", "disabled")
@@ -8822,6 +8824,20 @@ class FylorraQtMainWindow(QMainWindow):
         except Exception:
             pass
 
+        # Stability guard for packaged desktop builds. The downloader must never crash
+        # because older settings selected GPU layers or FlashAttention automatically.
+        gpu_layers = 0
+        flash_attn = "disabled"
+        try:
+            if hasattr(self, "_st_ai_gpu_layers") and isinstance(getattr(self, "_st_ai_gpu_layers"), QSlider):
+                self._st_ai_gpu_layers.setValue(0)
+            if hasattr(self, "_st_ai_flash_attn") and isinstance(getattr(self, "_st_ai_flash_attn"), QComboBox):
+                idx = self._st_ai_flash_attn.findData("disabled")
+                if idx >= 0:
+                    self._st_ai_flash_attn.setCurrentIndex(idx)
+        except Exception:
+            pass
+
         try:
             # Model selection (catalog-driven, separate text + vision slots)
             vision_id = ""
@@ -8998,7 +9014,7 @@ class FylorraQtMainWindow(QMainWindow):
         if not ai:
             QMessageBox.warning(self, "AI Model", "AI is not available in this build.")
             return
-        loader = _QtAIModelLoadDialog(self, ai_manager=ai, kind=kind, action="download")
+        loader = _QtAIModelDownloadDialog(self, ai_manager=ai, kind=kind)
         if loader.exec() == QDialog.Accepted:
             QMessageBox.information(self, "AI Model", "Model files are downloaded and ready. Use Load Model only when you want to start AI features now.")
         self._settings_refresh_ai()
@@ -20344,6 +20360,137 @@ class _QtAIModelLoadWorker(QObject):
         except Exception as e:
             self.error.emit(str(e))
 
+class _QtAIModelDownloadDialog(QDialog):
+    """Download model files without emitting Qt signals from the download thread."""
+
+    def __init__(self, parent: QWidget, *, ai_manager, kind: str | None = None):
+        super().__init__(parent)
+        self.ai_manager = ai_manager
+        k = (kind or "").strip().lower()
+        self.kind = k if k in ("vision", "text") else None
+        self._events = queue.Queue()
+        self._done = False
+
+        self.setWindowTitle("AI Model Download")
+        self.setModal(True)
+        self.setMinimumWidth(560)
+        self.setStyleSheet(_qt_modern_dialog_stylesheet())
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        kind_label = ""
+        if self.kind in ("vision", "text"):
+            kind_label = " (Vision)" if self.kind == "vision" else " (Text)"
+        title = QLabel(f"Downloading the AI model{kind_label}...")
+        title.setObjectName("DialogTitle")
+        layout.addWidget(title)
+
+        self.status = QLabel("Starting download...")
+        self.status.setObjectName("DialogSubtitle")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1000)
+        self.bar.setValue(0)
+        layout.addWidget(self.bar)
+
+        self.detail = QLabel("Model files are stored in the local Fylorra AI models folder.")
+        self.detail.setObjectName("DialogSubtitle")
+        self.detail.setWordWrap(True)
+        layout.addWidget(self.detail)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_close = QPushButton("Close")
+        self.btn_close.clicked.connect(self.reject)
+        self.btn_close.setEnabled(False)
+        self.btn_close.setVisible(False)
+        row.addWidget(self.btn_close)
+        layout.addLayout(row)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(100)
+        self._timer.timeout.connect(self._drain_events)
+        self._timer.start()
+
+        self._thread = threading.Thread(target=self._run_download, name="FylorraAIModelDownload", daemon=True)
+        self._thread.start()
+
+    def _run_download(self):
+        try:
+            ai = self.ai_manager
+            if not ai:
+                self._events.put(("error", "AI Manager is not available."))
+                return
+            if self.kind:
+                try:
+                    ai.select_kind(self.kind)
+                except Exception:
+                    pass
+
+            def dl_cb(message: str, progress: float, downloaded: str = "", speed: str = ""):
+                try:
+                    pct = max(0.0, min(1.0, float(progress)))
+                except Exception:
+                    pct = 0.0
+                self._events.put(("progress", str(message or "Downloading..."), pct, str(downloaded or ""), str(speed or "")))
+
+            ok = bool(ai.ensure_model_downloaded(dl_cb))
+            if ok:
+                self._events.put(("finished", True, "Model files downloaded."))
+            else:
+                err = str(getattr(ai, "load_error", "") or "").strip()
+                self._events.put(("finished", False, err or "Model download failed."))
+        except Exception as e:
+            self._events.put(("error", f"Model download failed: {e}"))
+
+    def _drain_events(self):
+        while True:
+            try:
+                event = self._events.get_nowait()
+            except queue.Empty:
+                break
+            kind = event[0]
+            if kind == "progress":
+                _kind, message, pct, downloaded, speed = event
+                self.status.setText(message)
+                self.bar.setValue(int(pct * 1000))
+                parts = []
+                if downloaded:
+                    parts.append(downloaded)
+                if speed:
+                    parts.append(speed)
+                self.detail.setText(" / ".join(parts) if parts else "Downloading model files...")
+            elif kind == "finished":
+                _kind, ok, message = event
+                self._done = True
+                self._timer.stop()
+                if ok:
+                    self.bar.setValue(1000)
+                    self.status.setText("Downloaded.")
+                    self.detail.setText("The model files are ready. Load the model only when you need AI features now.")
+                    QTimer.singleShot(250, self.accept)
+                else:
+                    self._show_failure(message)
+            elif kind == "error":
+                self._done = True
+                self._timer.stop()
+                self._show_failure(event[1])
+
+    def _show_failure(self, message: str):
+        self.status.setText("Failed.")
+        self.detail.setText((message or "Failed to download the AI model.").strip())
+        self.btn_close.setVisible(True)
+        self.btn_close.setEnabled(True)
+        self.btn_close.setText("Close")
+        try:
+            self.btn_close.clicked.disconnect()
+        except Exception:
+            pass
+        self.btn_close.clicked.connect(self.reject)
 
 class _QtAIModelLoadDialog(QDialog):
     def __init__(self, parent: QWidget, *, ai_manager, kind: str | None = None, action: str = "prepare"):

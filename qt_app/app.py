@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QRectF, QSize, QByteArray
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QLinearGradient, QColor, QFont, QPen, QFontMetrics
-from PySide6.QtWidgets import QApplication, QSplashScreen
+from PySide6.QtWidgets import QApplication, QDialog, QSplashScreen
 from PySide6.QtSvg import QSvgRenderer
 
 from core.branding import APP_NAME, APP_ORGANIZATION
@@ -172,7 +172,7 @@ def run(argv: list[str]) -> int:
     from core.monitor_manager import MonitorManager
     from core.settings_manager import SettingsManager
     from qt_app.backend import FylorraBackend
-    from qt_app.main_window import FylorraQtMainWindow
+    from qt_app.main_window import FylorraQtMainWindow, _QtAIModelDownloadDialog
     from qt_app.styles import apply_app_theme
 
     settings_manager = SettingsManager()
@@ -194,6 +194,45 @@ def run(argv: list[str]) -> int:
         ai_manager=ai_manager,
     )
     backend.load()
+
+    if os.environ.get("FYLORRA_SMOKE_AI_DOWNLOAD") == "1":
+        try:
+            if splash is not None:
+                splash.close()
+            kind = os.environ.get("FYLORRA_SMOKE_AI_KIND", "vision")
+            smoke_ai = ai_manager
+            if os.environ.get("FYLORRA_SMOKE_AI_DOWNLOAD_FAKE") == "1":
+                class _SmokeAI:
+                    def select_kind(self, _kind):
+                        return None
+
+                    def ensure_model_downloaded(self, callback):
+                        for i in range(6):
+                            callback("Downloading test model", i / 5, f"{i} MB", "test speed")
+                        return True
+
+                smoke_ai = _SmokeAI()
+            if smoke_ai is None:
+                print("FYLORRA_SMOKE_AI_DOWNLOAD failed: AI manager unavailable", flush=True)
+                return 91
+            dlg = _QtAIModelDownloadDialog(None, ai_manager=smoke_ai, kind=kind)
+            code = dlg.exec()
+            try:
+                backend.shutdown()
+            except Exception:
+                pass
+            if code == QDialog.Accepted:
+                print("FYLORRA_SMOKE_AI_DOWNLOAD passed", flush=True)
+                return 0
+            print(f"FYLORRA_SMOKE_AI_DOWNLOAD rejected: {code}", flush=True)
+            return 92
+        except Exception as e:
+            print(f"FYLORRA_SMOKE_AI_DOWNLOAD failed: {e}", flush=True)
+            try:
+                backend.shutdown()
+            except Exception:
+                pass
+            return 93
 
     win = FylorraQtMainWindow(backend=backend)
     try:

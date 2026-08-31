@@ -68,14 +68,14 @@ class AIManager:
                 return int(value)
             s = str(value or "").strip().lower()
             if s in ("-1", "auto", "automatic", "default"):
-                return -1
+                return 0
             if s in ("1", "on", "true", "enabled", "enable"):
                 return 1
             if s in ("0", "off", "false", "disabled", "disable"):
                 return 0
         except Exception:
             pass
-        return -1
+        return 0
 
     def __init__(self, app_folder: Path, settings_manager=None):
         self.app_folder = app_folder
@@ -97,9 +97,9 @@ class AIManager:
             self.n_ctx = settings_manager.get_setting("ai_context_size", 2048)
             self.n_threads = settings_manager.get_setting("ai_threads", os.cpu_count())
             self.n_batch = settings_manager.get_setting("ai_batch_size", 512)
-            self.n_gpu_layers = settings_manager.get_setting("ai_gpu_layers", 0)
+            self.n_gpu_layers = 0
             self.image_size = settings_manager.get_setting("ai_image_size", 512)
-            self.flash_attn_type = self._parse_flash_attn_type(settings_manager.get_setting("ai_flash_attn_type", "disabled"))
+            self.flash_attn_type = 0
         else:
             # Defaults for fast inference
             self.n_ctx = 2048
