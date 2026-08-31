@@ -140,7 +140,8 @@ These screenshots are captured from the real Qt desktop app using sanitized samp
 
 Download the latest release from GitHub Releases. Release builds include:
 
-- Windows x64: `Fylorra-Windows-x64.zip`
+- Windows x64 installer: `Fylorra-Windows-x64-Setup.exe` (recommended)
+- Windows x64 portable: `Fylorra-Windows-x64.zip`
 - Linux x64: `Fylorra-Linux-x64.tar.gz`
 - macOS Apple Silicon: `Fylorra-macOS-arm64.tar.gz`
 - macOS Intel: `Fylorra-macOS-x64.tar.gz`

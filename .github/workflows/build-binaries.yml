@@ -70,12 +70,29 @@ jobs:
         shell: bash
         run: test -e "${{ matrix.binary }}"
 
-      - name: Package Windows artifact
+      - name: Package Windows portable artifact
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
           Compress-Archive -Path "${{ matrix.binary }}" -DestinationPath "release/${{ matrix.artifact }}.zip" -Force
+
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Build Windows setup installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          if ($version -notmatch '^v?\d+\.\d+\.\d+$') {
+            $version = "0.0.0"
+          }
+          $version = $version.TrimStart("v")
+          python installer/create_installer_assets.py
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" "/DVERSION=$version" installer/FylorraInstaller.nsi
 
       - name: Package Unix artifact
         if: runner.os != 'Windows'
@@ -117,5 +134,5 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" upload/* \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Fylorra ${GITHUB_REF_NAME}" \
-            --notes "Cross-platform Fylorra desktop builds for Windows x64, Linux x64, macOS Apple Silicon, and macOS Intel." \
+            --notes "Cross-platform Fylorra desktop builds for Windows x64, Linux x64, macOS Apple Silicon, and macOS Intel. Windows includes both a portable zip and a branded setup installer." \
             --latest
