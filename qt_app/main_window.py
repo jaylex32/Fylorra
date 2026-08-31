@@ -13886,6 +13886,11 @@ class FylorraQtMainWindow(QMainWindow):
             "use_vision": bool(getattr(self, "_ai_hub_use_vision", None) and self._ai_hub_use_vision.isChecked()),
             "use_ai_docs": bool(getattr(self, "_ai_hub_use_ai_docs", None) and self._ai_hub_use_ai_docs.isChecked()),
         }
+        needs_loaded_ai = bool(opts.get("use_vision")) or bool(opts.get("use_ai_docs")) or any(
+            op in {"security_scan", "content_analysis"} for op in selected
+        )
+        if needs_loaded_ai and not self._ensure_ai_ready(title="Prepare AI Model", kind="vision"):
+            return
         # Reduce dialog spam: if a single operation has a dedicated full UI, open it directly.
         if selected == ["auto_categorize"]:
             dlg = _QtAutoCategorizeDialog(
@@ -17572,32 +17577,10 @@ class _QtAiHubWorker(QObject):
             def _set_progress(p: float):
                 self.progress.emit(max(0.0, min(1.0, float(p))))
 
-            # Ensure model is loaded if we need vision/doc analysis.
+            # Model loading is handled by the dialog before this worker starts.
             if needs_ai and ai and (not getattr(ai, "is_ready", False)):
-                _set_status("Preparing AI model…")
-
-                def dl_cb(message: str, progress: float, downloaded: str = "", speed: str = ""):
-                    _set_status(message)
-                    _set_progress(0.05 * float(progress))
-
-                try:
-                    ok = bool(ai.ensure_model_downloaded(dl_cb))
-                except Exception as e:
-                    self.error.emit(f"Model download failed: {e}")
-                    return
-                if not ok:
-                    self.error.emit("Model download failed.")
-                    return
-
-                def load_cb(message: str, progress: float, *_rest):
-                    _set_status(message)
-                    _set_progress(0.05 + 0.15 * float(progress))
-
-                try:
-                    ai.load_model(load_cb)
-                except Exception as e:
-                    self.error.emit(f"Model load failed: {e}")
-                    return
+                self.error.emit("AI model is not loaded. Load it before starting AI Hub operations.")
+                return
 
             from core.bulk_ai_processor import BulkAIProcessor, ProcessingOptions, ProcessingMode
 
@@ -18881,30 +18864,8 @@ class _QtAutoCategorizeWorker(QObject):
                 self.error.emit("AI Manager is not available.")
                 return
             if needs_ai and ai and (not getattr(ai, "is_ready", False)):
-                self.status.emit("Preparing AI model…")
-
-                def dl_cb(message: str, progress: float, *_rest):
-                    self.status.emit(message)
-                    self.progress.emit(0.1 * float(progress))
-
-                try:
-                    ok = bool(ai.ensure_model_downloaded(dl_cb))
-                except Exception as e:
-                    self.error.emit(f"Model download failed: {e}")
-                    return
-                if not ok:
-                    self.error.emit(str(getattr(ai, "load_error", "") or "Model download failed."))
-                    return
-
-                def load_cb(message: str, progress: float, *_rest):
-                    self.status.emit(message)
-                    self.progress.emit(0.1 + 0.2 * float(progress))
-
-                try:
-                    ai.load_model(load_cb)
-                except Exception as e:
-                    self.error.emit(f"Model load failed: {e}")
-                    return
+                self.error.emit("AI model is not loaded. Load it before starting Auto-Categorize.")
+                return
 
             from core.enhanced_categorizer import EnhancedCategorizer
 
@@ -19177,6 +19138,13 @@ class _QtAutoCategorizeDialog(QDialog):
             QMessageBox.information(self, "Auto-Categorize", "No target folder available. Run from AI Hub with a target folder.")
             return
 
+        needs_loaded_ai = bool(self.cb_ai_vision.isChecked()) or bool(self.cb_ai_docs.isChecked())
+        if needs_loaded_ai:
+            top = self.parent().window() if self.parent() else None
+            ensure = getattr(top, "_ensure_ai_ready", None)
+            if callable(ensure) and not ensure(title="Prepare Auto-Categorize", kind="vision"):
+                return
+
         self.btn_rerun.setEnabled(False)
         self.btn_apply.setEnabled(False)
         self.subtitle.setText("Scanning…")
@@ -19394,30 +19362,8 @@ class _QtSmartRenameWorker(QObject):
 
             needs_ai = bool(self.use_vision) or bool(self.use_ai_docs)
             if needs_ai and (not getattr(ai, "is_ready", False)):
-                self.status.emit("Preparing AI model…")
-
-                def dl_cb(message: str, progress: float, *_rest):
-                    self.status.emit(message)
-                    self.progress.emit(0.1 * float(progress))
-
-                try:
-                    ok = bool(ai.ensure_model_downloaded(dl_cb))
-                except Exception as e:
-                    self.error.emit(f"Model download failed: {e}")
-                    return
-                if not ok:
-                    self.error.emit(str(getattr(ai, "load_error", "") or "Model download failed."))
-                    return
-
-                def load_cb(message: str, progress: float, *_rest):
-                    self.status.emit(message)
-                    self.progress.emit(0.1 + 0.2 * float(progress))
-
-                try:
-                    ai.load_model(load_cb)
-                except Exception as e:
-                    self.error.emit(f"Model load failed: {e}")
-                    return
+                self.error.emit("AI model is not loaded. Load it before starting Smart Rename.")
+                return
 
             # Determine file filter.
             from core.bulk_ai_processor import BulkAIProcessor
@@ -19725,13 +19671,19 @@ class _QtSmartRenameDialog(QDialog):
             it.setCheckState(0, Qt.Checked if checked else Qt.Unchecked)
 
     def _scan(self):
+        fk = str(self.filter.currentData() or "all")
+        needs_loaded_ai = bool(self.cb_ai_vision.isChecked()) or bool(self.cb_ai_docs.isChecked())
+        if needs_loaded_ai:
+            top = self.parent().window() if self.parent() else None
+            ensure = getattr(top, "_ensure_ai_ready", None)
+            if callable(ensure) and not ensure(title="Prepare Smart Rename", kind="vision"):
+                return
+
         self.btn_scan.setEnabled(False)
         self.btn_apply.setEnabled(False)
         self.subtitle.setText("Scanning…")
         self.tree.clear()
         self.bar.setValue(0)
-
-        fk = str(self.filter.currentData() or "all")
 
         self.worker = _QtSmartRenameWorker(
             backend=self.backend,
@@ -19874,30 +19826,8 @@ class _QtContentAnalysisWorker(QObject):
                 return
 
             if not getattr(ai, "is_ready", False):
-                self.status.emit("Preparing AI model…")
-
-                def dl_cb(message: str, progress: float, *_rest):
-                    self.status.emit(message)
-                    self.progress.emit(0.1 * float(progress))
-
-                try:
-                    ok = bool(ai.ensure_model_downloaded(dl_cb))
-                except Exception as e:
-                    self.error.emit(f"Model download failed: {e}")
-                    return
-                if not ok:
-                    self.error.emit(str(getattr(ai, "load_error", "") or "Model download failed."))
-                    return
-
-                def load_cb(message: str, progress: float, *_rest):
-                    self.status.emit(message)
-                    self.progress.emit(0.1 + 0.2 * float(progress))
-
-                try:
-                    ai.load_model(load_cb)
-                except Exception as e:
-                    self.error.emit(f"Model load failed: {e}")
-                    return
+                self.error.emit("AI model is not loaded. Load it before starting Content Analysis.")
+                return
 
             from core.bulk_ai_processor import BulkAIProcessor, ProcessingOptions, ProcessingMode
             from core.semantic_analyzer import SemanticAnalyzer
@@ -20099,6 +20029,11 @@ class _QtContentAnalysisDialog(QDialog):
         return selected
 
     def _scan(self):
+        top = self.parent().window() if self.parent() else None
+        ensure = getattr(top, "_ensure_ai_ready", None)
+        if callable(ensure) and not ensure(title="Prepare Content Analysis", kind="vision"):
+            return
+
         self.btn_scan.setEnabled(False)
         self.btn_apply_rename.setEnabled(False)
         self.btn_apply_category.setEnabled(False)
@@ -20281,85 +20216,6 @@ class _QtContentAnalysisDialog(QDialog):
         QMessageBox.information(self, "Apply Category", f"Moved: {moved}\nSkipped: {skipped}")
 
 
-class _QtAIModelLoadWorker(QObject):
-    status = Signal(str)
-    progress = Signal(float)
-    finished = Signal(bool)
-    error = Signal(str)
-
-    def __init__(self, *, ai_manager, kind: str | None = None, action: str = "prepare"):
-        super().__init__()
-        self.ai_manager = ai_manager
-        k = (kind or "").strip().lower()
-        self.kind = k if k in ("vision", "text") else None
-        a = (action or "prepare").strip().lower()
-        self.action = a if a in ("download", "load", "prepare") else "prepare"
-
-    def run(self):
-        ai = self.ai_manager
-        try:
-            if not ai:
-                self.error.emit("AI Manager is not available.")
-                return
-
-            if self.kind:
-                try:
-                    ai.select_kind(self.kind)
-                except Exception:
-                    pass
-
-            if getattr(ai, "is_ready", False):
-                if not self.kind:
-                    self.finished.emit(True)
-                    return
-                try:
-                    current_kind = ai.get_active_kind()
-                except Exception:
-                    current_kind = "vision" if getattr(ai, "is_vision_model", False) else "text"
-                if current_kind == self.kind:
-                    self.finished.emit(True)
-                    return
-                try:
-                    ai.unload_model()
-                except Exception:
-                    pass
-
-            def dl_cb(message: str, progress: float, downloaded: str = "", speed: str = ""):
-                self.status.emit(message)
-                self.progress.emit(0.0 + 0.4 * float(progress))
-
-            try:
-                ok = bool(ai.ensure_model_downloaded(dl_cb))
-            except Exception as e:
-                self.error.emit(f"Model download failed: {e}")
-                return
-            if not ok:
-                err = str(getattr(ai, "load_error", "") or "").strip()
-                self.error.emit(err or "Model download failed.")
-                return
-            if self.action == "download":
-                self.status.emit("Model files downloaded.")
-                self.progress.emit(1.0)
-                self.finished.emit(True)
-                return
-
-            def load_cb(message: str, progress: float, *_rest):
-                self.status.emit(message)
-                self.progress.emit(0.4 + 0.6 * float(progress))
-
-            try:
-                ai.load_model(load_cb)
-            except Exception as e:
-                self.error.emit(f"Model load failed: {e}")
-                return
-            if bool(getattr(ai, "is_ready", False)):
-                self.finished.emit(True)
-                return
-            err = str(getattr(ai, "load_error", "") or "").strip()
-            self.error.emit(err or "Failed to load model.")
-        except Exception as e:
-            self.error.emit(str(e))
-
 class _QtAIModelDownloadDialog(QDialog):
     """Download model files without emitting Qt signals from the download thread."""
 
@@ -20493,37 +20349,50 @@ class _QtAIModelDownloadDialog(QDialog):
         self.btn_close.clicked.connect(self.reject)
 
 class _QtAIModelLoadDialog(QDialog):
+    """Prepare/load model files without touching Qt widgets from worker threads."""
+
     def __init__(self, parent: QWidget, *, ai_manager, kind: str | None = None, action: str = "prepare"):
         super().__init__(parent)
+        self.ai_manager = ai_manager
+        k = (kind or "").strip().lower()
+        self.kind = k if k in ("vision", "text") else None
         self.action = (action or "prepare").strip().lower()
-        if self.action not in ("download", "load", "prepare"):
+        if self.action not in ("download", "load", "prepare", "load_unload"):
             self.action = "prepare"
+        self._events = queue.Queue()
+        self._done = False
+
         self.setWindowTitle("AI Model")
         self.setModal(True)
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(560)
         self.setStyleSheet(_qt_modern_dialog_stylesheet())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
-        k = (kind or "").strip().lower()
         kind_label = ""
-        if k in ("vision", "text"):
-            kind_label = " (Vision)" if k == "vision" else " (Text)"
+        if self.kind in ("vision", "text"):
+            kind_label = " (Vision)" if self.kind == "vision" else " (Text)"
         verb = "Downloading" if self.action == "download" else "Loading"
-        title = QLabel(f"{verb} the AI model{kind_label}…")
+        title = QLabel(f"{verb} the AI model{kind_label}...")
         title.setObjectName("DialogTitle")
         layout.addWidget(title)
 
-        self.status = QLabel("Starting…")
+        self.status = QLabel("Starting...")
         self.status.setObjectName("DialogSubtitle")
+        self.status.setWordWrap(True)
         layout.addWidget(self.status)
 
         self.bar = QProgressBar()
         self.bar.setRange(0, 1000)
         self.bar.setValue(0)
         layout.addWidget(self.bar)
+
+        self.detail = QLabel("Preparing local AI runtime...")
+        self.detail.setObjectName("DialogSubtitle")
+        self.detail.setWordWrap(True)
+        layout.addWidget(self.detail)
 
         row = QHBoxLayout()
         row.addStretch(1)
@@ -20534,43 +20403,150 @@ class _QtAIModelLoadDialog(QDialog):
         row.addWidget(self.btn_close)
         layout.addLayout(row)
 
-        self.worker = _QtAIModelLoadWorker(ai_manager=ai_manager, kind=kind, action=self.action)
-        self._thread = QThread(self)
-        self.worker.moveToThread(self._thread)
-        self._thread.started.connect(self.worker.run)
-        self.worker.status.connect(self.status.setText)
-        self.worker.progress.connect(lambda p: self.bar.setValue(int(max(0.0, min(1.0, p)) * 1000)))
-        self.worker.finished.connect(self._on_finished)
-        self.worker.error.connect(self._on_error)
-        self.worker.finished.connect(self._thread.quit)
-        self.worker.error.connect(self._thread.quit)
-        self._thread.finished.connect(self._thread.deleteLater)
-        self._thread.finished.connect(self.worker.deleteLater)
+        self._timer = QTimer(self)
+        self._timer.setInterval(100)
+        self._timer.timeout.connect(self._drain_events)
+        self._timer.start()
+
+        self._thread = threading.Thread(target=self._run_prepare, name="FylorraAIModelLoad", daemon=True)
         self._thread.start()
 
-    def _on_finished(self, ok: bool):
-        self.bar.setValue(1000 if ok else self.bar.value())
-        self.status.setText(("Downloaded." if self.action == "download" else "Ready.") if ok else "Failed to prepare model.")
-        if ok:
-            # Auto-close on success (no extra OK click).
-            from PySide6.QtCore import QTimer
-
-            QTimer.singleShot(250, self.accept)
-            return
-
-        # On failure, let the user close.
-        self.btn_close.setVisible(True)
-        self.btn_close.setEnabled(True)
-        self.btn_close.setText("Close")
+    def _run_prepare(self):
+        ai = self.ai_manager
         try:
-            self.btn_close.clicked.disconnect()
-        except Exception:
-            pass
-        self.btn_close.clicked.connect(self.reject)
+            if not ai:
+                self._events.put(("error", "AI Manager is not available."))
+                return
 
-    def _on_error(self, msg: str):
+            if self.kind:
+                try:
+                    ai.select_kind(self.kind)
+                except Exception:
+                    pass
+
+            if getattr(ai, "is_ready", False):
+                if not self.kind:
+                    self._events.put(("finished", True, "AI model is already loaded."))
+                    return
+                try:
+                    current_kind = ai.get_active_kind()
+                except Exception:
+                    current_kind = "vision" if getattr(ai, "is_vision_model", False) else "text"
+                if current_kind == self.kind:
+                    if self.action == "load_unload":
+                        self._queue_progress("Unloading AI model...", 1.0, "", "")
+                        try:
+                            ai.unload_model()
+                        except Exception as e:
+                            self._events.put(("error", f"Model unload failed: {e}"))
+                            return
+                        if bool(getattr(ai, "is_ready", False)):
+                            self._events.put(("error", "Model unload did not complete."))
+                            return
+                        self._events.put(("finished", True, "AI model loaded and unloaded cleanly."))
+                        return
+                    self._events.put(("finished", True, "AI model is already loaded."))
+                    return
+                try:
+                    ai.unload_model()
+                except Exception:
+                    pass
+
+            def dl_cb(message: str, progress: float, downloaded: str = "", speed: str = ""):
+                self._queue_progress(message, 0.0 + 0.4 * self._safe_progress(progress), downloaded, speed)
+
+            try:
+                ok = bool(ai.ensure_model_downloaded(dl_cb))
+            except Exception as e:
+                self._events.put(("error", f"Model download failed: {e}"))
+                return
+            if not ok:
+                err = str(getattr(ai, "load_error", "") or "").strip()
+                self._events.put(("error", err or "Model download failed."))
+                return
+
+            if self.action == "download":
+                self._events.put(("finished", True, "Model files downloaded."))
+                return
+
+            def load_cb(message: str, progress: float, downloaded: str = "", speed: str = ""):
+                self._queue_progress(message, 0.4 + 0.6 * self._safe_progress(progress), downloaded, speed)
+
+            try:
+                ai.load_model(load_cb)
+            except Exception as e:
+                self._events.put(("error", f"Model load failed: {e}"))
+                return
+
+            if bool(getattr(ai, "is_ready", False)):
+                if self.action == "load_unload":
+                    self._queue_progress("Unloading AI model...", 1.0, "", "")
+                    try:
+                        ai.unload_model()
+                    except Exception as e:
+                        self._events.put(("error", f"Model unload failed: {e}"))
+                        return
+                    if bool(getattr(ai, "is_ready", False)):
+                        self._events.put(("error", "Model unload did not complete."))
+                        return
+                    self._events.put(("finished", True, "AI model loaded and unloaded cleanly."))
+                    return
+                self._events.put(("finished", True, "AI model is ready."))
+                return
+            err = str(getattr(ai, "load_error", "") or "").strip()
+            self._events.put(("error", err or "Failed to load model."))
+        except Exception as e:
+            self._events.put(("error", str(e)))
+
+    @staticmethod
+    def _safe_progress(value: float) -> float:
+        try:
+            return max(0.0, min(1.0, float(value)))
+        except Exception:
+            return 0.0
+
+    def _queue_progress(self, message: str, progress: float, downloaded: str = "", speed: str = ""):
+        self._events.put(("progress", str(message or "Working..."), self._safe_progress(progress), str(downloaded or ""), str(speed or "")))
+
+    def _drain_events(self):
+        while True:
+            try:
+                event = self._events.get_nowait()
+            except queue.Empty:
+                break
+            kind = event[0]
+            if kind == "progress":
+                _kind, message, pct, downloaded, speed = event
+                self.status.setText(message)
+                self.bar.setValue(int(pct * 1000))
+                parts = []
+                if downloaded:
+                    parts.append(downloaded)
+                if speed:
+                    parts.append(speed)
+                if parts:
+                    self.detail.setText(" / ".join(parts))
+            elif kind == "finished":
+                _kind, ok, message = event
+                self._done = True
+                self._timer.stop()
+                self.bar.setValue(1000 if ok else self.bar.value())
+                done_label = "Downloaded." if self.action == "download" else ("Load/unload OK." if self.action == "load_unload" else "Ready.")
+                self.status.setText(done_label if ok else "Failed.")
+                self.detail.setText(str(message or ""))
+                if ok:
+                    QTimer.singleShot(250, self.accept)
+                else:
+                    self._show_failure(message)
+            elif kind == "error":
+                self._done = True
+                self._timer.stop()
+                self._show_failure(event[1])
+
+    def _show_failure(self, msg: str):
         clean = (msg or "Failed to prepare the AI model.").strip()
-        self.status.setText("Failed.\n\n" + clean)
+        self.status.setText("Failed.")
+        self.detail.setText(clean)
         self.btn_close.setVisible(True)
         self.btn_close.setEnabled(True)
         self.btn_close.setText("Close")
@@ -20579,7 +20555,6 @@ class _QtAIModelLoadDialog(QDialog):
         except Exception:
             pass
         self.btn_close.clicked.connect(self.reject)
-
 
 class _QtAICommandPlanWorker(QObject):
     status = Signal(str)
