@@ -97,17 +97,17 @@ class AIManager:
             self.n_ctx = settings_manager.get_setting("ai_context_size", 2048)
             self.n_threads = settings_manager.get_setting("ai_threads", os.cpu_count())
             self.n_batch = settings_manager.get_setting("ai_batch_size", 512)
-            self.n_gpu_layers = settings_manager.get_setting("ai_gpu_layers", 35)
+            self.n_gpu_layers = settings_manager.get_setting("ai_gpu_layers", 0)
             self.image_size = settings_manager.get_setting("ai_image_size", 512)
-            self.flash_attn_type = self._parse_flash_attn_type(settings_manager.get_setting("ai_flash_attn_type", "auto"))
+            self.flash_attn_type = self._parse_flash_attn_type(settings_manager.get_setting("ai_flash_attn_type", "disabled"))
         else:
             # Defaults for fast inference
             self.n_ctx = 2048
             self.n_threads = os.cpu_count()
             self.n_batch = 512
-            self.n_gpu_layers = 35
+            self.n_gpu_layers = 0
             self.image_size = 512
-            self.flash_attn_type = -1
+            self.flash_attn_type = 0
 
         self.temperature = 0.1  # Low for consistent naming
 
@@ -341,173 +341,175 @@ class AIManager:
 
     def ensure_model_downloaded(self, progress_callback: Optional[Callable[[str, float, str, str], None]] = None) -> bool:
         """
-        Download model files if not present
+        Download model files if they are missing or incomplete.
 
+        Files are written to *.part first and renamed only after the transfer finishes.
+        This prevents a crashed/aborted download from being treated as a usable GGUF.
         progress_callback(message, progress, downloaded_str, speed_str)
         """
         try:
+            import requests
+
             def _safe_dir_name(s: str) -> str:
                 s = (s or "").strip()
                 if not s:
                     return "default"
                 return re.sub(r"[^A-Za-z0-9_.-]+", "_", s)[:80] or "default"
 
-            # Store each model in its own subfolder to prevent mmproj filename collisions.
-            model_dir = self.models_folder / _safe_dir_name(self.model_id or Path(self.model_file or self.MODEL_FILE).stem)
-            try:
-                model_dir.mkdir(exist_ok=True)
-            except Exception:
-                model_dir = self.models_folder
-
-            model_path = model_dir / (self.model_file or self.MODEL_FILE)
-            mmproj_path = (model_dir / self.mmproj_file) if self.mmproj_file else None
-
-            # Backward compatible legacy paths (older versions stored files directly in ai_models/)
-            legacy_model = self.models_folder / (self.model_file or self.MODEL_FILE)
-            legacy_mmproj = (self.models_folder / self.mmproj_file) if self.mmproj_file else None
-
-            # Check if already downloaded
-            if (model_path.exists() and (mmproj_path is None or mmproj_path.exists())) or (
-                legacy_model.exists() and (legacy_mmproj is None or legacy_mmproj.exists())
-            ):
-                logger.info("Model files already exist")
-                if progress_callback:
-                    progress_callback("Model ready", 1.0, "", "")
-                return True
-
-            logger.info("Downloading AI model files...")
-
-            # Try to estimate total download size (for progress UI).
-            # Use HEAD content-length when available; otherwise fall back to a small non-zero total.
-            import requests
-
             def _head_size(url: str) -> int:
                 try:
                     r = requests.head(url, allow_redirects=True, timeout=30)
-                    return int(r.headers.get("content-length", 0) or 0)
+                    if 200 <= int(getattr(r, "status_code", 0) or 0) < 400:
+                        return int(r.headers.get("content-length", 0) or 0)
                 except Exception:
-                    return 0
+                    pass
+                return 0
 
-            model_url = f"https://huggingface.co/{self.model_repo}/resolve/main/{self.model_file}"
+            def _is_complete(path: Path, expected_size: int, min_size: int) -> bool:
+                try:
+                    if not path.exists() or not path.is_file():
+                        return False
+                    actual = int(path.stat().st_size or 0)
+                    if expected_size > 0:
+                        # Accept a slightly larger file, but never a shorter one.
+                        return actual >= expected_size
+                    return actual >= min_size
+                except Exception:
+                    return False
+
+            def _remove_if_incomplete(path: Path, expected_size: int, min_size: int) -> None:
+                try:
+                    if path.exists() and not _is_complete(path, expected_size, min_size):
+                        logger.warning(f"Removing incomplete AI model file: {path}")
+                        path.unlink()
+                except Exception:
+                    pass
+                try:
+                    part = path.with_name(path.name + ".part")
+                    if part.exists():
+                        part.unlink()
+                except Exception:
+                    pass
+
+            def _fmt_mb(n: int) -> str:
+                return f"{max(0, n) / (1024 * 1024):.1f} MB"
+
+            model_dir = self.models_folder / _safe_dir_name(self.model_id or Path(self.model_file or self.MODEL_FILE).stem)
+            try:
+                model_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                model_dir = self.models_folder
+                model_dir.mkdir(parents=True, exist_ok=True)
+
+            model_name = self.model_file or self.MODEL_FILE
+            model_path = model_dir / model_name
+            mmproj_path = (model_dir / self.mmproj_file) if self.mmproj_file else None
+
+            legacy_model = self.models_folder / model_name
+            legacy_mmproj = (self.models_folder / self.mmproj_file) if self.mmproj_file else None
+
+            model_url = f"https://huggingface.co/{self.model_repo}/resolve/main/{model_name}"
             mmproj_url = (
                 f"https://huggingface.co/{self.model_repo}/resolve/main/{self.mmproj_file}"
                 if mmproj_path is not None and self.mmproj_file
                 else None
             )
 
-            model_size_est = _head_size(model_url) if not model_path.exists() else model_path.stat().st_size
-            mmproj_size_est = 0
-            if mmproj_url and mmproj_path is not None:
-                mmproj_size_est = _head_size(mmproj_url) if not mmproj_path.exists() else mmproj_path.stat().st_size
+            if progress_callback:
+                progress_callback("Checking model files...", 0.0, "", "")
+
+            model_size_est = _head_size(model_url)
+            mmproj_size_est = _head_size(mmproj_url) if mmproj_url else 0
+            min_model_size = 50 * 1024 * 1024
+            min_mmproj_size = 1 * 1024 * 1024
+
+            _remove_if_incomplete(model_path, model_size_est, min_model_size)
+            if mmproj_path is not None:
+                _remove_if_incomplete(mmproj_path, mmproj_size_est, min_mmproj_size)
+
+            model_ready = _is_complete(model_path, model_size_est, min_model_size)
+            mmproj_ready = mmproj_path is None or _is_complete(mmproj_path, mmproj_size_est, min_mmproj_size)
+            legacy_ready = _is_complete(legacy_model, model_size_est, min_model_size) and (
+                legacy_mmproj is None or _is_complete(legacy_mmproj, mmproj_size_est, min_mmproj_size)
+            )
+
+            if (model_ready and mmproj_ready) or legacy_ready:
+                logger.info("Model files already exist and look complete")
+                if progress_callback:
+                    progress_callback("Model files ready", 1.0, "", "")
+                return True
+
             total_size_est = max(1, int(model_size_est or 0) + int(mmproj_size_est or 0))
+            completed_before_current = 0
 
-            # Download main model
-            if not model_path.exists():
+            def _download_url(url: str, dest: Path, label: str, base_progress: float, progress_span: float, expected_size: int) -> None:
+                part = dest.with_name(dest.name + ".part")
+                part.parent.mkdir(parents=True, exist_ok=True)
                 if progress_callback:
-                    progress_callback("Starting model download...", 0.0, "0 MB", "")
+                    progress_callback(f"Starting {label} download...", base_progress, "0 MB", "")
 
-                import time
-
-                response = requests.get(model_url, stream=True, timeout=30)
+                response = requests.get(url, stream=True, timeout=30)
                 response.raise_for_status()
-
-                total_size = int(response.headers.get('content-length', 0))
+                total = int(response.headers.get("content-length", 0) or 0) or int(expected_size or 0)
                 start_time = time.time()
                 last_update = start_time
-
-                with open(model_path, 'wb') as f:
-                    downloaded = 0
-                    for chunk in response.iter_content(chunk_size=65536):  # 64KB chunks for faster download
-                        if chunk:
+                downloaded = 0
+                try:
+                    with open(part, "wb") as f:
+                        for chunk in response.iter_content(chunk_size=1024 * 1024):
+                            if not chunk:
+                                continue
                             f.write(chunk)
                             downloaded += len(chunk)
-
-                            # Update UI every 0.3 seconds
                             now = time.time()
-                            if now - last_update >= 0.3 or downloaded >= total_size:
-                                overall_progress = downloaded / total_size_est
-
-                                # Calculate speed
-                                elapsed = now - start_time
-                                if elapsed > 0:
-                                    speed_bps = downloaded / elapsed
-                                    speed_mbps = speed_bps / (1024 * 1024)
-
-                                    # Calculate ETA
-                                    remaining_bytes = total_size_est - downloaded
-                                    eta_seconds = remaining_bytes / speed_bps if speed_bps > 0 else 0
-                                    eta_min = int(eta_seconds / 60)
-                                    eta_sec = int(eta_seconds % 60)
-
-                                    downloaded_mb = downloaded / (1024 * 1024)
-                                    total_mb = total_size_est / (1024 * 1024)
-
-                                    if progress_callback:
-                                        progress_callback(
-                                            f"Downloading model... ({downloaded_mb:.1f} / {total_mb:.1f} MB)",
-                                            overall_progress,
-                                            f"{downloaded_mb:.1f} / {total_mb:.1f} MB",
-                                            f"{speed_mbps:.1f} MB/s - ETA {eta_min}:{eta_sec:02d}"
-                                        )
-
+                            if now - last_update >= 0.3 or (total and downloaded >= total):
+                                elapsed = max(0.001, now - start_time)
+                                speed_bps = downloaded / elapsed
+                                speed_mbps = speed_bps / (1024 * 1024)
+                                if total > 0:
+                                    frac = min(1.0, downloaded / max(1, total))
+                                    remaining = max(0, total - downloaded)
+                                else:
+                                    frac = min(0.99, downloaded / max(1, total_size_est))
+                                    remaining = max(0, total_size_est - completed_before_current - downloaded)
+                                eta_seconds = remaining / speed_bps if speed_bps > 0 else 0
+                                eta_min = int(eta_seconds / 60)
+                                eta_sec = int(eta_seconds % 60)
+                                if progress_callback:
+                                    total_text = _fmt_mb(total) if total > 0 else "unknown"
+                                    progress_callback(
+                                        f"Downloading {label}... ({_fmt_mb(downloaded)} / {total_text})",
+                                        min(1.0, base_progress + progress_span * frac),
+                                        f"{_fmt_mb(downloaded)} / {total_text}",
+                                        f"{speed_mbps:.1f} MB/s - ETA {eta_min}:{eta_sec:02d}",
+                                    )
                                 last_update = now
+                    if expected_size > 0 and part.stat().st_size < expected_size:
+                        raise RuntimeError(f"Incomplete {label} download: got {_fmt_mb(part.stat().st_size)}, expected {_fmt_mb(expected_size)}.")
+                    if part.stat().st_size < (min_mmproj_size if label == "vision processor" else min_model_size):
+                        raise RuntimeError(f"Incomplete {label} download: file is too small ({_fmt_mb(part.stat().st_size)}).")
+                    part.replace(dest)
+                except Exception:
+                    try:
+                        if part.exists():
+                            part.unlink()
+                    except Exception:
+                        pass
+                    raise
 
+            if not _is_complete(model_path, model_size_est, min_model_size):
+                _download_url(model_url, model_path, "model", 0.0, 0.75 if mmproj_url else 1.0, model_size_est)
+                completed_before_current = int(model_size_est or model_path.stat().st_size or 0)
                 logger.info(f"Model downloaded to {model_path}")
+            else:
+                completed_before_current = int(model_path.stat().st_size or model_size_est or 0)
 
-            # Download multimodal projector (vision models only)
-            if mmproj_path is not None and mmproj_url and not mmproj_path.exists():
-                if progress_callback:
-                    progress_callback("Starting vision processor download...", 0.75, "", "")
-
-                import time
-
-                response = requests.get(mmproj_url, stream=True, timeout=30)
-                response.raise_for_status()
-
-                total_size = int(response.headers.get('content-length', 0))
-                start_time = time.time()
-                last_update = start_time
-
-                with open(mmproj_path, 'wb') as f:
-                    downloaded = 0
-                    for chunk in response.iter_content(chunk_size=65536):  # 64KB chunks
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
-
-                            # Update UI every 0.3 seconds
-                            now = time.time()
-                            if now - last_update >= 0.3 or downloaded >= total_size:
-                                overall_progress = (model_size_est + downloaded) / total_size_est
-
-                                elapsed = now - start_time
-                                if elapsed > 0:
-                                    speed_bps = downloaded / elapsed
-                                    speed_mbps = speed_bps / (1024 * 1024)
-
-                                    remaining_bytes = total_size_est - (model_size_est + downloaded)
-                                    eta_seconds = remaining_bytes / speed_bps if speed_bps > 0 else 0
-                                    eta_min = int(eta_seconds / 60)
-                                    eta_sec = int(eta_seconds % 60)
-
-                                    downloaded_mb = (model_size_est + downloaded) / (1024 * 1024)
-                                    total_mb = total_size_est / (1024 * 1024)
-
-                                    if progress_callback:
-                                        progress_callback(
-                                            f"Downloading vision processor... ({downloaded_mb:.1f} / {total_mb:.1f} MB)",
-                                            overall_progress,
-                                            f"{downloaded_mb:.1f} / {total_mb:.1f} MB",
-                                            f"{speed_mbps:.1f} MB/s - ETA {eta_min}:{eta_sec:02d}"
-                                        )
-
-                                last_update = now
-
+            if mmproj_path is not None and mmproj_url and not _is_complete(mmproj_path, mmproj_size_est, min_mmproj_size):
+                _download_url(mmproj_url, mmproj_path, "vision processor", 0.75, 0.25, mmproj_size_est)
                 logger.info(f"Projector downloaded to {mmproj_path}")
 
             if progress_callback:
                 progress_callback("Download complete!", 1.0, "", "")
-
             return True
 
         except Exception as e:
@@ -613,9 +615,9 @@ class AIManager:
                     n_threads=self.n_threads,
                     n_batch=self.n_batch,
                     n_gpu_layers=self.n_gpu_layers,
-                    use_mlock=True,
+                    use_mlock=False,
                     verbose=False,
-                    logits_all=True,
+                    logits_all=False,
                     rope_freq_base=0.0,
                     rope_freq_scale=0.0,
                     **extra_kwargs,
@@ -629,9 +631,9 @@ class AIManager:
                     n_threads=self.n_threads,
                     n_batch=self.n_batch,
                     n_gpu_layers=self.n_gpu_layers,
-                    use_mlock=True,
+                    use_mlock=False,
                     verbose=False,
-                    logits_all=True,
+                    logits_all=False,
                     rope_freq_base=0.0,
                     rope_freq_scale=0.0,
                     **extra_kwargs,

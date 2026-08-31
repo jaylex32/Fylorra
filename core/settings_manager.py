@@ -29,10 +29,52 @@ class SettingsManager:
 
         try:
             with open(self.settings_file, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return self._get_default_settings()
+            return self._normalize_settings(data)
         except Exception as e:
             print(f"Error loading settings: {e}")
             return self._get_default_settings()
+
+    def _normalize_settings(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge missing defaults and migrate old unsafe AI performance defaults."""
+        defaults = self._get_default_settings()
+        changed = False
+        for key, value in defaults.items():
+            if key not in data:
+                data[key] = value
+                changed = True
+
+        # Older builds defaulted llama-cpp to GPU layers=35 and FlashAttention=auto.
+        # On machines without a matching native backend this can terminate the Qt process.
+        # Reset only once for pre-profile settings; users can opt back into GPU from Edit.
+        try:
+            profile_version = int(data.get("ai_performance_profile_version", 0) or 0)
+        except Exception:
+            profile_version = 0
+        if profile_version < 2:
+            try:
+                old_gpu = int(data.get("ai_gpu_layers", 0) or 0)
+            except Exception:
+                old_gpu = 0
+            old_flash = str(data.get("ai_flash_attn_type", "") or "").strip().lower()
+            if old_gpu == 35:
+                data["ai_gpu_layers"] = 0
+                changed = True
+            if old_flash in ("", "auto"):
+                data["ai_flash_attn_type"] = "disabled"
+                changed = True
+            data["ai_performance_profile_version"] = 2
+            changed = True
+
+        if changed:
+            try:
+                with open(self.settings_file, 'w') as f:
+                    json.dump(data, f, indent=4)
+            except Exception:
+                pass
+        return data
 
     def _get_default_settings(self) -> Dict[str, Any]:
         """Get default settings"""
@@ -83,13 +125,14 @@ class SettingsManager:
             "ai_text_model_file": "Qwen3-4B-Instruct-2507-Q8_0.gguf",
             "ai_text_mmproj_file": "",
             "ai_text_chat_format": "qwen",
-            "ai_gpu_layers": 35,
+            "ai_gpu_layers": 0,
             "ai_threads": 8,
             "ai_context_size": 2048,
             "ai_batch_size": 512,
             "ai_image_size": 512,
             # llama-cpp FlashAttention: "auto" | "enabled" | "disabled"
-            "ai_flash_attn_type": "auto",
+            "ai_flash_attn_type": "disabled",
+            "ai_performance_profile_version": 2,
             "ai_rename_max_keywords": 8,
             # Writing Assistant: which model to use ("auto" | "text" | "vision")
             "writing_assistant_model_preference": "text",

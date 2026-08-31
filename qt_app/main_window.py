@@ -7950,12 +7950,20 @@ class FylorraQtMainWindow(QMainWindow):
         self._st_ai_target.addItem("Load text", "text")
         row.addWidget(self._st_ai_target)
 
-        self._st_ai_load = QPushButton("Download/Load")
+        self._st_ai_load = QPushButton("Download Model")
         self._st_ai_load.setObjectName("PrimaryButton")
-        self._st_ai_load.setIcon(self.icons.icon("ai"))
+        self._st_ai_load.setIcon(self.icons.icon("download"))
         self._st_ai_load.setIconSize(QSize(18, 18))
+        self._st_ai_load.setToolTip("Download the selected model files only. This does not load the model into memory.")
         self._st_ai_load.clicked.connect(self._settings_load_ai)
         row.addWidget(self._st_ai_load)
+
+        self._st_ai_load_model = QPushButton("Load Model")
+        self._st_ai_load_model.setIcon(self.icons.icon("ai"))
+        self._st_ai_load_model.setIconSize(QSize(18, 18))
+        self._st_ai_load_model.setToolTip("Load the downloaded model into memory. Use CPU-safe settings first unless you have configured GPU support.")
+        self._st_ai_load_model.clicked.connect(self._settings_load_ai_into_memory)
+        row.addWidget(self._st_ai_load_model)
 
         self._st_ai_unload = QPushButton("Unload")
         self._st_ai_unload.clicked.connect(self._settings_unload_ai)
@@ -7987,7 +7995,7 @@ class FylorraQtMainWindow(QMainWindow):
         # GPU layers
         self._st_ai_gpu_layers = QSlider(Qt.Horizontal)
         self._st_ai_gpu_layers.setRange(0, 35)
-        self._st_ai_gpu_layers.setValue(int(get_setting("ai_gpu_layers", 35) or 35))
+        self._st_ai_gpu_layers.setValue(int(get_setting("ai_gpu_layers", 0) or 0))
         gpu_value = QLabel(str(self._st_ai_gpu_layers.value()))
         gpu_row = QHBoxLayout()
         gpu_row.addWidget(self._st_ai_gpu_layers, 1)
@@ -8038,7 +8046,7 @@ class FylorraQtMainWindow(QMainWindow):
         self._st_ai_flash_attn.addItem("Auto (recommended)", "auto")
         self._st_ai_flash_attn.addItem("Enabled", "enabled")
         self._st_ai_flash_attn.addItem("Disabled", "disabled")
-        cur_fa = get_setting("ai_flash_attn_type", "auto")
+        cur_fa = get_setting("ai_flash_attn_type", "disabled")
         try:
             if isinstance(cur_fa, int):
                 cur_fa = "auto" if int(cur_fa) == -1 else ("enabled" if int(cur_fa) == 1 else "disabled")
@@ -8802,15 +8810,15 @@ class FylorraQtMainWindow(QMainWindow):
                 pass
             return int(default)
 
-        gpu_layers = _to_int(getattr(self, "_st_ai_gpu_layers", None), int(settings.get_setting("ai_gpu_layers", 35) or 35))
+        gpu_layers = _to_int(getattr(self, "_st_ai_gpu_layers", None), int(settings.get_setting("ai_gpu_layers", 0) or 0))
         threads = _to_int(getattr(self, "_st_ai_threads", None), int(settings.get_setting("ai_threads", 8) or 8))
         ctx = _to_int(getattr(self, "_st_ai_ctx", None), int(settings.get_setting("ai_context_size", 2048) or 2048))
         batch = _to_int(getattr(self, "_st_ai_batch", None), int(settings.get_setting("ai_batch_size", 512) or 512))
         img = _to_int(getattr(self, "_st_ai_img", None), int(settings.get_setting("ai_image_size", 512) or 512))
-        flash_attn = str(settings.get_setting("ai_flash_attn_type", "auto") or "auto").strip().lower()
+        flash_attn = str(settings.get_setting("ai_flash_attn_type", "disabled") or "disabled").strip().lower()
         try:
             if hasattr(self, "_st_ai_flash_attn") and isinstance(getattr(self, "_st_ai_flash_attn"), QComboBox):
-                flash_attn = str(self._st_ai_flash_attn.currentData() or self._st_ai_flash_attn.currentText() or "auto").strip().lower()
+                flash_attn = str(self._st_ai_flash_attn.currentData() or self._st_ai_flash_attn.currentText() or "disabled").strip().lower()
         except Exception:
             pass
 
@@ -8939,6 +8947,8 @@ class FylorraQtMainWindow(QMainWindow):
             self._st_ai_status.setText("AI: unavailable")
             self._st_ai_load.setEnabled(False)
             self._st_ai_unload.setEnabled(False)
+            if hasattr(self, "_st_ai_load_model"):
+                self._st_ai_load_model.setEnabled(False)
             if hasattr(self, "_st_ai_reload"):
                 self._st_ai_reload.setEnabled(False)
             return
@@ -8956,22 +8966,46 @@ class FylorraQtMainWindow(QMainWindow):
         else:
             self._st_ai_status.setText("AI: not loaded" + model_label + (f" • {err}" if err else ""))
         self._st_ai_load.setEnabled(True)
+        if hasattr(self, "_st_ai_load_model"):
+            self._st_ai_load_model.setEnabled(True)
         self._st_ai_unload.setEnabled(bool(ready))
         if hasattr(self, "_st_ai_reload"):
             self._st_ai_reload.setEnabled(True)
 
-    def _settings_load_ai(self):
-        self._settings_apply_ai_params_to_manager()
-        ai = getattr(self.backend, "ai_manager", None)
+    def _settings_selected_ai_kind(self) -> str:
         try:
-            kind = "vision"
             if hasattr(self, "_st_ai_target") and isinstance(getattr(self, "_st_ai_target"), QComboBox):
                 kind = str(self._st_ai_target.currentData() or "vision").strip().lower() or "vision"
+                return kind if kind in ("vision", "text") else "vision"
+        except Exception:
+            pass
+        return "vision"
+
+    def _settings_prepare_ai_kind(self) -> str:
+        self._settings_apply_ai_params_to_manager()
+        kind = self._settings_selected_ai_kind()
+        ai = getattr(self.backend, "ai_manager", None)
+        try:
             if ai and hasattr(ai, "select_kind"):
                 ai.select_kind(kind)
         except Exception:
             pass
-        if self._ensure_ai_ready(title="Load AI Model"):
+        return kind
+
+    def _settings_load_ai(self):
+        kind = self._settings_prepare_ai_kind()
+        ai = getattr(self.backend, "ai_manager", None)
+        if not ai:
+            QMessageBox.warning(self, "AI Model", "AI is not available in this build.")
+            return
+        loader = _QtAIModelLoadDialog(self, ai_manager=ai, kind=kind, action="download")
+        if loader.exec() == QDialog.Accepted:
+            QMessageBox.information(self, "AI Model", "Model files are downloaded and ready. Use Load Model only when you want to start AI features now.")
+        self._settings_refresh_ai()
+
+    def _settings_load_ai_into_memory(self):
+        kind = self._settings_prepare_ai_kind()
+        if self._ensure_ai_ready(title="Load AI Model", kind=kind):
             self._settings_refresh_ai()
 
     def _settings_unload_ai(self):
@@ -20237,11 +20271,13 @@ class _QtAIModelLoadWorker(QObject):
     finished = Signal(bool)
     error = Signal(str)
 
-    def __init__(self, *, ai_manager, kind: str | None = None):
+    def __init__(self, *, ai_manager, kind: str | None = None, action: str = "prepare"):
         super().__init__()
         self.ai_manager = ai_manager
         k = (kind or "").strip().lower()
         self.kind = k if k in ("vision", "text") else None
+        a = (action or "prepare").strip().lower()
+        self.action = a if a in ("download", "load", "prepare") else "prepare"
 
     def run(self):
         ai = self.ai_manager
@@ -20285,6 +20321,11 @@ class _QtAIModelLoadWorker(QObject):
                 err = str(getattr(ai, "load_error", "") or "").strip()
                 self.error.emit(err or "Model download failed.")
                 return
+            if self.action == "download":
+                self.status.emit("Model files downloaded.")
+                self.progress.emit(1.0)
+                self.finished.emit(True)
+                return
 
             def load_cb(message: str, progress: float, *_rest):
                 self.status.emit(message)
@@ -20305,9 +20346,12 @@ class _QtAIModelLoadWorker(QObject):
 
 
 class _QtAIModelLoadDialog(QDialog):
-    def __init__(self, parent: QWidget, *, ai_manager, kind: str | None = None):
+    def __init__(self, parent: QWidget, *, ai_manager, kind: str | None = None, action: str = "prepare"):
         super().__init__(parent)
-        self.setWindowTitle("Loading AI Model")
+        self.action = (action or "prepare").strip().lower()
+        if self.action not in ("download", "load", "prepare"):
+            self.action = "prepare"
+        self.setWindowTitle("AI Model")
         self.setModal(True)
         self.setMinimumWidth(520)
         self.setStyleSheet(_qt_modern_dialog_stylesheet())
@@ -20320,7 +20364,8 @@ class _QtAIModelLoadDialog(QDialog):
         kind_label = ""
         if k in ("vision", "text"):
             kind_label = " (Vision)" if k == "vision" else " (Text)"
-        title = QLabel(f"Preparing the AI model{kind_label}…")
+        verb = "Downloading" if self.action == "download" else "Loading"
+        title = QLabel(f"{verb} the AI model{kind_label}…")
         title.setObjectName("DialogTitle")
         layout.addWidget(title)
 
@@ -20342,7 +20387,7 @@ class _QtAIModelLoadDialog(QDialog):
         row.addWidget(self.btn_close)
         layout.addLayout(row)
 
-        self.worker = _QtAIModelLoadWorker(ai_manager=ai_manager, kind=kind)
+        self.worker = _QtAIModelLoadWorker(ai_manager=ai_manager, kind=kind, action=self.action)
         self._thread = QThread(self)
         self.worker.moveToThread(self._thread)
         self._thread.started.connect(self.worker.run)
@@ -20358,7 +20403,7 @@ class _QtAIModelLoadDialog(QDialog):
 
     def _on_finished(self, ok: bool):
         self.bar.setValue(1000 if ok else self.bar.value())
-        self.status.setText("Ready." if ok else "Failed to load model.")
+        self.status.setText(("Downloaded." if self.action == "download" else "Ready.") if ok else "Failed to prepare model.")
         if ok:
             # Auto-close on success (no extra OK click).
             from PySide6.QtCore import QTimer

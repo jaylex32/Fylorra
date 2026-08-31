@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import traceback
+import faulthandler
 from datetime import datetime
 from pathlib import Path
 
@@ -13,6 +14,9 @@ from PySide6.QtWidgets import QApplication, QSplashScreen
 from PySide6.QtSvg import QSvgRenderer
 
 from core.branding import APP_NAME, APP_ORGANIZATION
+
+
+_FATAL_LOG_HANDLE = None
 
 
 def _install_crash_logger() -> None:
@@ -33,6 +37,17 @@ def _install_crash_logger() -> None:
             pass
 
     sys.excepthook = _log_exception
+
+    global _FATAL_LOG_HANDLE
+    try:
+        base = Path.home() / ".fylorra" / "logs"
+        base.mkdir(parents=True, exist_ok=True)
+        _FATAL_LOG_HANDLE = (base / "native-crash.log").open("a", encoding="utf-8")
+        _FATAL_LOG_HANDLE.write(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Fylorra process started\n")
+        _FATAL_LOG_HANDLE.flush()
+        faulthandler.enable(file=_FATAL_LOG_HANDLE, all_threads=True)
+    except Exception:
+        pass
 
 
 def _load_svg_renderer(svg_path: Path, *, viewbox: str | None = None) -> QSvgRenderer:
