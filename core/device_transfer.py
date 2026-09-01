@@ -7,6 +7,7 @@ small authenticated HTTP receiver plus UDP LAN discovery.
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import mimetypes
@@ -14,6 +15,7 @@ import os
 import platform
 import secrets
 import socket
+import ssl
 import threading
 import time
 import urllib.parse
@@ -40,6 +42,12 @@ RECEIVE_IDLE_TIMEOUT = 180.0
 # On a rejection, read at most this much of the body first so a small upload can
 # finish writing and still read the reply instead of seeing a socket reset.
 REJECT_DRAIN_BYTES = 1024 * 1024
+# A TLS record always starts with the handshake byte, which lets one port serve
+# both TLS and plaintext so older builds keep working against a new receiver.
+TLS_HANDSHAKE_FIRST_BYTE = b"\x16"
+TLS_PEEK_TIMEOUT = 10.0
+TRANSFER_IDENTITY_DIR = "transfer_identity"
+TRANSFER_CERT_DAYS = 3650
 ACTIVE_DOWNLOAD_SUFFIXES = {
     ".crdownload",
     ".download",
@@ -48,6 +56,74 @@ ACTIVE_DOWNLOAD_SUFFIXES = {
     ".opdownload",
     ".tmp",
 }
+
+
+def _fingerprint(cert_der: bytes) -> str:
+    """SHA-256 of the DER certificate, which is what peers pin against."""
+    return hashlib.sha256(cert_der).hexdigest()
+
+
+def _cert_der(cert: Any) -> bytes:
+    """DER bytes for a loaded certificate; imported lazily to keep startup cheap."""
+    from cryptography.hazmat.primitives import serialization
+
+    return cert.public_bytes(serialization.Encoding.DER)
+
+
+def _ensure_device_identity(folder: Path, common_name: str) -> tuple[Path, Path, str]:
+    """Return (cert, key, fingerprint), generating a self-signed pair once.
+
+    Device transfer has no CA to lean on, so each device keeps its own long-lived
+    certificate and peers pin its fingerprint the first time they talk.
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+    cert_path = folder / "device_cert.pem"
+    key_path = folder / "device_key.pem"
+
+    if cert_path.exists() and key_path.exists():
+        try:
+            from cryptography import x509
+
+            cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+            return cert_path, key_path, _fingerprint(_cert_der(cert))
+        except Exception:
+            pass  # unreadable or corrupt: fall through and mint a new one
+
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, str(common_name or "Fylorra device")[:64])])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=TRANSFER_CERT_DAYS))
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("fylorra-device")]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    try:
+        os.chmod(key_path, 0o600)
+    except Exception:
+        pass
+    return cert_path, key_path, _fingerprint(_cert_der(cert))
 
 
 @dataclass(frozen=True)
@@ -285,9 +361,56 @@ class _TransferHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, server_address: tuple[str, int], handler, transfer_service: "DeviceTransferService"):
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        handler,
+        transfer_service: "DeviceTransferService",
+        ssl_context: ssl.SSLContext | None = None,
+    ):
         super().__init__(server_address, handler)
         self.transfer_service = transfer_service
+        self.ssl_context = ssl_context
+
+    def finish_request(self, request, client_address) -> None:
+        """Serve TLS and plaintext on one port.
+
+        Peeking at the first byte tells the two apart, so a single forwarded port
+        keeps working for older builds that only speak plaintext while newer ones
+        get an encrypted connection. Runs on the per-connection thread, so a slow
+        handshake never blocks the accept loop.
+        """
+        sock = request
+        if self.ssl_context is not None:
+            try:
+                request.settimeout(TLS_PEEK_TIMEOUT)
+                first = request.recv(1, socket.MSG_PEEK)
+            except Exception:
+                return
+            finally:
+                try:
+                    request.settimeout(None)
+                except Exception:
+                    pass
+            if first[:1] == TLS_HANDSHAKE_FIRST_BYTE:
+                try:
+                    sock = self.ssl_context.wrap_socket(request, server_side=True)
+                except Exception:
+                    return
+                # wrap_socket detaches the original, so this socket is ours to close.
+                try:
+                    self.RequestHandlerClass(sock, client_address, self)
+                finally:
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
+                return
+        self.RequestHandlerClass(sock, client_address, self)
+
+
+class PeerIdentityChanged(RuntimeError):
+    """The receiver presented a different certificate than the one first accepted."""
 
 
 class _UploadSession:
@@ -303,17 +426,91 @@ class _UploadSession:
 
     UPLOAD_PATH = "/api/v1/upload"
 
-    def __init__(self, *, host: str, port: int, timeout: float = 60.0, blocksize: int = UPLOAD_BLOCK_SIZE):
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        timeout: float = 60.0,
+        blocksize: int = UPLOAD_BLOCK_SIZE,
+        service: "DeviceTransferService | None" = None,
+    ):
         self.host = str(host or "").strip()
         self.port = int(port or 0)
         self.timeout = float(timeout)
         self.blocksize = int(blocksize)
+        self.service = service
         self._conn: http.client.HTTPConnection | None = None
+        self._plaintext = False  # set once a peer is known not to speak TLS
+        self._verified = False  # access code checked once per run
+
+    def _pinned_fingerprint(self) -> str:
+        if self.service is None:
+            return ""
+        try:
+            return self.service.peer_fingerprint(self.host, self.port)
+        except Exception:
+            return ""
+
+    def _connect_tls(self, pinned: str) -> http.client.HTTPConnection:
+        """Open a TLS connection and check the certificate against the saved pin.
+
+        The certificate is self-signed, so hostname checking is meaningless here;
+        the peer's identity is its fingerprint, accepted on first contact and
+        required to match every time after that.
+        """
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        conn = http.client.HTTPSConnection(
+            self.host, self.port, timeout=self.timeout, blocksize=self.blocksize, context=context
+        )
+        conn.connect()
+        try:
+            presented = _fingerprint(conn.sock.getpeercert(binary_form=True) or b"")
+        except Exception:
+            presented = ""
+        if pinned:
+            if not presented or not secrets.compare_digest(presented, pinned):
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                raise PeerIdentityChanged(
+                    "The receiving device's security identity changed. If you re-installed "
+                    "on that device this is expected; otherwise the connection may be "
+                    "intercepted. Clear the saved identity for this device to accept the new one."
+                )
+        elif presented and self.service is not None:
+            try:
+                self.service.remember_peer_fingerprint(self.host, self.port, presented)
+            except Exception:
+                pass
+        return conn
 
     def _connection(self) -> tuple[http.client.HTTPConnection, bool]:
         """Return the live connection plus whether it was carried over."""
         if self._conn is not None:
             return self._conn, True
+
+        pinned = self._pinned_fingerprint()
+        if not self._plaintext:
+            try:
+                self._conn = self._connect_tls(pinned)
+                return self._conn, False
+            except PeerIdentityChanged:
+                raise
+            except Exception:
+                if pinned:
+                    # This peer has spoken TLS before, so refuse to quietly drop to
+                    # plaintext - that is exactly what a downgrade attack looks like.
+                    raise RuntimeError(
+                        "This device previously used an encrypted connection but encryption "
+                        "is no longer available, so the transfer was stopped."
+                    )
+                self._plaintext = True  # receiver predates encryption
+
         self._conn = http.client.HTTPConnection(
             self.host, self.port, timeout=self.timeout, blocksize=self.blocksize
         )
@@ -327,7 +524,39 @@ class _UploadSession:
             except Exception:
                 pass
 
+    def _verify_access(self, access_code: str) -> None:
+        """Check the access code with an empty POST before sending real data.
+
+        A rejected upload is answered while the sender is still writing, so for
+        anything but a small file the sender only ever sees the connection drop.
+        One zero-length probe per run turns that into the actual reason, and
+        avoids pushing a large file that was never going to be accepted.
+        """
+        conn, _reused = self._connection()
+        headers = {"X-Fylorra-Token": access_code, "Content-Length": "0"}
+        try:
+            conn.request("POST", self.UPLOAD_PATH, body=b"", headers=headers)
+            resp = conn.getresponse()
+            raw = resp.read()
+            status = int(resp.status)
+            if resp.will_close:
+                self.close()
+        except (http.client.HTTPException, OSError):
+            # Probing failed for some other reason; let the real upload report it.
+            self.close()
+            return
+        if status == int(HTTPStatus.UNAUTHORIZED):
+            try:
+                payload = json.loads(raw.decode("utf-8", errors="ignore"))
+            except Exception:
+                payload = {}
+            raise RuntimeError(str(payload.get("error") or "Invalid access code"))
+
     def upload(self, *, access_code: str, item: TransferFile) -> None:
+        if not self._verified:
+            self._verify_access(access_code)
+            self._verified = True
+
         quoted = urllib.parse.quote(item.relative_name.replace("\\", "/"))
         headers = {
             "X-Fylorra-Token": access_code,
@@ -410,6 +639,8 @@ class DeviceTransferService:
             "skip_active_downloads": True,
             "require_stable_files": True,
             "max_file_bytes": 0,
+            # host:port -> certificate fingerprint accepted on first contact.
+            "peer_fingerprints": {},
         }
         defaults.update(saved)
         return defaults
@@ -450,7 +681,9 @@ class DeviceTransferService:
             self.config["inbox_dir"] = str(inbox)
 
             port = int(self.config.get("port") or DEFAULT_TRANSFER_PORT)
-            server = _TransferHTTPServer(("0.0.0.0", port), _TransferRequestHandler, self)
+            server = _TransferHTTPServer(
+                ("0.0.0.0", port), _TransferRequestHandler, self, ssl_context=self._server_ssl_context()
+            )
             self._server = server
             self.config["port"] = int(server.server_address[1])
             self.config["enabled"] = True
@@ -560,6 +793,57 @@ class DeviceTransferService:
                 pass
             self._stop_event.wait(3.0)
 
+    def _identity_folder(self) -> Path:
+        base = getattr(self.settings_manager, "app_folder", None)
+        root = Path(str(base)) if base else (Path.home() / ".fylorra")
+        return root / TRANSFER_IDENTITY_DIR
+
+    def _server_ssl_context(self) -> ssl.SSLContext | None:
+        """TLS context for incoming connections, or None if it cannot be built."""
+        try:
+            cert_path, key_path, fingerprint = _ensure_device_identity(self._identity_folder(), self.device_name)
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            context.load_cert_chain(str(cert_path), str(key_path))
+            self._fingerprint = fingerprint
+            return context
+        except Exception as e:
+            # Without this the feature still works, just unencrypted as before.
+            self.record_activity("error", f"Could not enable transfer encryption: {e}")
+            self._fingerprint = ""
+            return None
+
+    def identity_fingerprint(self) -> str:
+        """This device's certificate fingerprint, for out-of-band comparison."""
+        current = getattr(self, "_fingerprint", "")
+        if current:
+            return current
+        try:
+            _cert, _key, fingerprint = _ensure_device_identity(self._identity_folder(), self.device_name)
+        except Exception:
+            return ""
+        self._fingerprint = fingerprint
+        return fingerprint
+
+    def peer_fingerprint(self, host: str, port: int) -> str:
+        pins = self.config.get("peer_fingerprints") or {}
+        return str(pins.get(f"{host}:{int(port)}") or "")
+
+    def remember_peer_fingerprint(self, host: str, port: int, fingerprint: str) -> None:
+        with self._lock:
+            pins = dict(self.config.get("peer_fingerprints") or {})
+            pins[f"{host}:{int(port)}"] = str(fingerprint)
+            self.config["peer_fingerprints"] = pins
+            self._save_config()
+
+    def forget_peer_fingerprint(self, host: str, port: int) -> None:
+        """Drop a saved peer identity so the next connection re-accepts it."""
+        with self._lock:
+            pins = dict(self.config.get("peer_fingerprints") or {})
+            if pins.pop(f"{host}:{int(port)}", None) is not None:
+                self.config["peer_fingerprints"] = pins
+                self._save_config()
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             port = int(self.config.get("port") or DEFAULT_TRANSFER_PORT)
@@ -574,6 +858,8 @@ class DeviceTransferService:
                 "local_addresses": [f"{ip}:{port}" for ip in _local_ip_candidates()],
                 "skip_active_downloads": bool(self.config.get("skip_active_downloads", True)),
                 "require_stable_files": bool(self.config.get("require_stable_files", True)),
+                "encrypted": bool(getattr(self, "_fingerprint", "")),
+                "fingerprint": str(getattr(self, "_fingerprint", "")),
             }
 
     def peers(self, max_age_seconds: int = 45) -> list[dict[str, Any]]:
@@ -656,7 +942,7 @@ class DeviceTransferService:
         stable_snapshot = self._stat_snapshot(files) if require_stable else {}
 
         # One connection for the whole run: no per-file handshake or slow-start restart.
-        session = _UploadSession(host=host, port=port)
+        session = _UploadSession(host=host, port=port, service=self)
         try:
             for index, item in enumerate(files, start=1):
                 if skip_active and _is_active_download_artifact(item.path):
@@ -735,7 +1021,7 @@ class DeviceTransferService:
     ) -> None:
         """Upload one file, reusing `session`'s connection when one is supplied."""
         own_session = session is None
-        active = session if session is not None else _UploadSession(host=host, port=port)
+        active = session if session is not None else _UploadSession(host=host, port=port, service=self)
         try:
             active.upload(access_code=access_code, item=item)
         finally:
