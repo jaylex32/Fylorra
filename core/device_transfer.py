@@ -7,6 +7,7 @@ small authenticated HTTP receiver plus UDP LAN discovery.
 
 from __future__ import annotations
 
+import http.client
 import json
 import mimetypes
 import os
@@ -15,9 +16,7 @@ import secrets
 import socket
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 import uuid
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -31,6 +30,16 @@ from core.branding import APP_NAME
 TRANSFER_PROTOCOL = "fylorra-transfer-v1"
 DEFAULT_TRANSFER_PORT = 47832
 DEFAULT_DISCOVERY_PORT = 47833
+# urllib feeds an upload through http.client in 8KB blocks, which caps a send at
+# roughly 2.5Gbps before the network is even involved. 256KB measured fastest.
+UPLOAD_BLOCK_SIZE = 256 * 1024
+# How long a file must look unchanged before it is considered safe to send.
+STABLE_WINDOW_SECONDS = 0.35
+# Closes keep-alive connections that go idle so they do not hold a thread.
+RECEIVE_IDLE_TIMEOUT = 180.0
+# On a rejection, read at most this much of the body first so a small upload can
+# finish writing and still read the reply instead of seeing a socket reset.
+REJECT_DRAIN_BYTES = 1024 * 1024
 ACTIVE_DOWNLOAD_SUFFIXES = {
     ".crdownload",
     ".download",
@@ -147,6 +156,10 @@ def _local_ip_candidates() -> list[str]:
 
 class _TransferRequestHandler(BaseHTTPRequestHandler):
     server_version = "FylorraTransfer/1.0"
+    # HTTP/1.1 keeps the connection open between uploads, so a run of files no
+    # longer pays a TCP handshake and a fresh slow-start ramp for every file.
+    protocol_version = "HTTP/1.1"
+    timeout = RECEIVE_IDLE_TIMEOUT
 
     def log_message(self, _format: str, *args: Any) -> None:
         return
@@ -154,6 +167,26 @@ class _TransferRequestHandler(BaseHTTPRequestHandler):
     @property
     def transfer_service(self) -> "DeviceTransferService":
         return self.server.transfer_service  # type: ignore[attr-defined]
+
+    def _reject(self, status: HTTPStatus, error: str, *, drain: bool = True) -> None:
+        """Reject an upload and close, since the rest of the body is never read.
+
+        A little of the body is read first: without that the sender is still
+        writing when the socket closes and it reports a connection reset instead
+        of the actual reason, which is useless when the access code is simply wrong.
+        """
+        if drain:
+            try:
+                remaining = min(int(self.headers.get("Content-Length") or 0), REJECT_DRAIN_BYTES)
+            except Exception:
+                remaining = 0
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        self.close_connection = True
+        self._send_json(status, {"ok": False, "error": error})
 
     def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -192,10 +225,10 @@ class _TransferRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path != "/api/v1/upload":
-            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Unknown endpoint"})
+            self._reject(HTTPStatus.NOT_FOUND, "Unknown endpoint")
             return
         if not self._token_ok():
-            self._send_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "Invalid access code"})
+            self._reject(HTTPStatus.UNAUTHORIZED, "Invalid access code")
             return
 
         try:
@@ -203,12 +236,12 @@ class _TransferRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             length = 0
         if length <= 0:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Empty upload"})
+            self._reject(HTTPStatus.BAD_REQUEST, "Empty upload")
             return
 
         max_bytes = int(self.transfer_service.config.get("max_file_bytes") or 0)
         if max_bytes > 0 and length > max_bytes:
-            self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"ok": False, "error": "File is larger than receiver limit"})
+            self._reject(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "File is larger than receiver limit")
             return
 
         rel_header = self.headers.get("X-Fylorra-Relative-Path") or self.headers.get("X-Fylorra-Filename") or ""
@@ -232,7 +265,7 @@ class _TransferRequestHandler(BaseHTTPRequestHandler):
                     temp_path.unlink(missing_ok=True)
                 except Exception:
                     pass
-                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Upload ended before all bytes were received"})
+                self._reject(HTTPStatus.BAD_REQUEST, "Upload ended before all bytes were received", drain=False)
                 return
             os.replace(temp_path, final_path)
             self.transfer_service.record_activity(
@@ -245,7 +278,7 @@ class _TransferRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, {"ok": True, "path": str(final_path), "bytes": written})
         except Exception as e:
             self.transfer_service.record_activity("error", f"Receive failed: {e}")
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
+            self._reject(HTTPStatus.INTERNAL_SERVER_ERROR, str(e), drain=False)
 
 
 class _TransferHTTPServer(ThreadingHTTPServer):
@@ -255,6 +288,85 @@ class _TransferHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address: tuple[str, int], handler, transfer_service: "DeviceTransferService"):
         super().__init__(server_address, handler)
         self.transfer_service = transfer_service
+
+
+class _UploadSession:
+    """Sends files over a single reused HTTP connection.
+
+    The previous implementation handed each file to urllib, which opened a fresh
+    connection every time. On a fast link that meant paying a TCP handshake and a
+    new slow-start ramp per file, so short transfers finished before the window
+    ever opened up. Holding one warm connection and reading the file in larger
+    blocks removes both costs. Falls back cleanly when the receiver is an older
+    build that closes after each response.
+    """
+
+    UPLOAD_PATH = "/api/v1/upload"
+
+    def __init__(self, *, host: str, port: int, timeout: float = 60.0, blocksize: int = UPLOAD_BLOCK_SIZE):
+        self.host = str(host or "").strip()
+        self.port = int(port or 0)
+        self.timeout = float(timeout)
+        self.blocksize = int(blocksize)
+        self._conn: http.client.HTTPConnection | None = None
+
+    def _connection(self) -> tuple[http.client.HTTPConnection, bool]:
+        """Return the live connection plus whether it was carried over."""
+        if self._conn is not None:
+            return self._conn, True
+        self._conn = http.client.HTTPConnection(
+            self.host, self.port, timeout=self.timeout, blocksize=self.blocksize
+        )
+        return self._conn, False
+
+    def close(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def upload(self, *, access_code: str, item: TransferFile) -> None:
+        quoted = urllib.parse.quote(item.relative_name.replace("\\", "/"))
+        headers = {
+            "X-Fylorra-Token": access_code,
+            "X-Fylorra-Relative-Path": quoted,
+            "Content-Length": str(item.size),
+            "Content-Type": mimetypes.guess_type(item.path.name)[0] or "application/octet-stream",
+        }
+
+        retried = False
+        while True:
+            conn, reused = self._connection()
+            try:
+                with open(item.path, "rb") as fh:
+                    conn.request("POST", self.UPLOAD_PATH, body=fh, headers=headers)
+                    resp = conn.getresponse()
+                    raw = resp.read()
+                    status = int(resp.status)
+                    will_close = bool(resp.will_close)
+            except (http.client.HTTPException, OSError) as e:
+                self.close()
+                # A carried-over connection can be dropped by the peer while idle.
+                # That fails before any body is sent, so retrying once is safe;
+                # a freshly opened connection failing is a real error.
+                if reused and not retried:
+                    retried = True
+                    continue
+                raise RuntimeError(str(e)) from e
+
+            if will_close:
+                # Older receivers answer with HTTP/1.0 and hang up after each file.
+                self.close()
+
+            try:
+                payload = json.loads(raw.decode("utf-8", errors="ignore"))
+            except Exception:
+                payload = {}
+            if status >= 300 or not bool(payload.get("ok", True)):
+                raise RuntimeError(str(payload.get("error") or f"HTTP {status}"))
+            return
 
 
 class DeviceTransferService:
@@ -536,57 +648,96 @@ class DeviceTransferService:
         skipped = 0
         failed: list[str] = []
         total = len(files)
-        for index, item in enumerate(files, start=1):
-            if bool(self.config.get("skip_active_downloads", True)) and _is_active_download_artifact(item.path):
-                skipped += 1
+
+        skip_active = bool(self.config.get("skip_active_downloads", True))
+        require_stable = bool(self.config.get("require_stable_files", True))
+        # Stat every file up front. The stability window then elapses while earlier
+        # files are already on the wire, instead of costing a fresh wait per file.
+        stable_snapshot = self._stat_snapshot(files) if require_stable else {}
+
+        # One connection for the whole run: no per-file handshake or slow-start restart.
+        session = _UploadSession(host=host, port=port)
+        try:
+            for index, item in enumerate(files, start=1):
+                if skip_active and _is_active_download_artifact(item.path):
+                    skipped += 1
+                    if progress:
+                        progress({"event": "skipped", "file": str(item.path), "index": index, "total": total, "reason": "active download file"})
+                    continue
+                if require_stable and not self._file_is_stable_since(item.path, stable_snapshot):
+                    skipped += 1
+                    if progress:
+                        progress({"event": "skipped", "file": str(item.path), "index": index, "total": total, "reason": "file changed while preparing"})
+                    continue
                 if progress:
-                    progress({"event": "skipped", "file": str(item.path), "index": index, "total": total, "reason": "active download file"})
-                continue
-            if bool(self.config.get("require_stable_files", True)) and not _file_is_stable(item.path):
-                skipped += 1
-                if progress:
-                    progress({"event": "skipped", "file": str(item.path), "index": index, "total": total, "reason": "file changed while preparing"})
-                continue
-            if progress:
-                progress({"event": "sending", "file": str(item.path), "index": index, "total": total, "bytes": item.size})
-            try:
-                self._send_one(host=host, port=port, access_code=token, item=item)
-                sent += 1
-                self.record_activity("sent", f"Sent {item.path.name} to {host}:{port} ({_format_bytes(item.size)})", path=str(item.path), bytes=item.size)
-                if progress:
-                    progress({"event": "sent", "file": str(item.path), "index": index, "total": total})
-            except Exception as e:
-                failed.append(f"{item.path}: {e}")
-                self.record_activity("error", f"Send failed for {item.path.name}: {e}", path=str(item.path))
-                if progress:
-                    progress({"event": "failed", "file": str(item.path), "index": index, "total": total, "error": str(e)})
+                    progress({"event": "sending", "file": str(item.path), "index": index, "total": total, "bytes": item.size})
+                try:
+                    self._send_one(host=host, port=port, access_code=token, item=item, session=session)
+                    sent += 1
+                    self.record_activity("sent", f"Sent {item.path.name} to {host}:{port} ({_format_bytes(item.size)})", path=str(item.path), bytes=item.size)
+                    if progress:
+                        progress({"event": "sent", "file": str(item.path), "index": index, "total": total})
+                except Exception as e:
+                    failed.append(f"{item.path}: {e}")
+                    self.record_activity("error", f"Send failed for {item.path.name}: {e}", path=str(item.path))
+                    if progress:
+                        progress({"event": "failed", "file": str(item.path), "index": index, "total": total, "error": str(e)})
+        finally:
+            session.close()
 
         return {"sent": sent, "skipped": skipped, "failed": failed, "total": total}
 
-    def _send_one(self, *, host: str, port: int, access_code: str, item: TransferFile) -> None:
-        url = f"http://{host}:{int(port)}/api/v1/upload"
-        quoted = urllib.parse.quote(item.relative_name.replace("\\", "/"))
-        headers = {
-            "X-Fylorra-Token": access_code,
-            "X-Fylorra-Relative-Path": quoted,
-            "Content-Length": str(item.size),
-            "Content-Type": mimetypes.guess_type(item.path.name)[0] or "application/octet-stream",
-        }
-        with open(item.path, "rb") as fh:
-            req = urllib.request.Request(url, data=fh, headers=headers, method="POST")
+    def _stat_snapshot(self, files: Iterable[TransferFile]) -> dict[str, tuple[int, int, float]]:
+        """Record size/mtime for every file so the stability wait can be shared."""
+        taken_at = _now()
+        snapshot: dict[str, tuple[int, int, float]] = {}
+        for item in files:
             try:
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    raw = resp.read()
-                    try:
-                        payload = json.loads(raw.decode("utf-8", errors="ignore"))
-                    except Exception:
-                        payload = {}
-                    if int(resp.status) >= 300 or not bool(payload.get("ok", True)):
-                        raise RuntimeError(str(payload.get("error") or f"HTTP {resp.status}"))
-            except urllib.error.HTTPError as e:
-                try:
-                    payload = json.loads(e.read().decode("utf-8", errors="ignore"))
-                    msg = str(payload.get("error") or e)
-                except Exception:
-                    msg = str(e)
-                raise RuntimeError(msg) from e
+                st = item.path.stat()
+            except Exception:
+                continue
+            snapshot[str(item.path)] = (st.st_size, int(st.st_mtime_ns), taken_at)
+        return snapshot
+
+    def _file_is_stable_since(
+        self,
+        path: Path,
+        snapshot: dict[str, tuple[int, int, float]],
+        wait_seconds: float = STABLE_WINDOW_SECONDS,
+    ) -> bool:
+        """Same check as _file_is_stable, but reusing the up-front stat.
+
+        The file still has to look identical across a window of at least
+        `wait_seconds` ending right now, so a file being written is caught exactly
+        as before. Only the first file can still have to wait.
+        """
+        first = snapshot.get(str(path))
+        if first is None:
+            return _file_is_stable(path, wait_seconds)
+        size, mtime_ns, taken_at = first
+        remaining = float(wait_seconds) - (_now() - taken_at)
+        if remaining > 0:
+            time.sleep(remaining)
+        try:
+            second = path.stat()
+        except Exception:
+            return False
+        return second.st_size == size and int(second.st_mtime_ns) == mtime_ns
+
+    def _send_one(
+        self,
+        *,
+        host: str,
+        port: int,
+        access_code: str,
+        item: TransferFile,
+        session: "_UploadSession | None" = None,
+    ) -> None:
+        """Upload one file, reusing `session`'s connection when one is supplied."""
+        own_session = session is None
+        active = session if session is not None else _UploadSession(host=host, port=port)
+        try:
+            active.upload(access_code=access_code, item=item)
+        finally:
+            if own_session:
+                active.close()
