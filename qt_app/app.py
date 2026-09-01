@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import threading
 import traceback
 import faulthandler
 from datetime import datetime
@@ -37,6 +38,12 @@ def _install_crash_logger() -> None:
             pass
 
     sys.excepthook = _log_exception
+
+    if hasattr(threading, "excepthook"):
+        def _log_thread_exception(args) -> None:
+            _log_exception(args.exc_type, args.exc_value, args.exc_traceback)
+
+        threading.excepthook = _log_thread_exception
 
     global _FATAL_LOG_HANDLE
     try:
@@ -142,6 +149,53 @@ def _build_splash_pixmap() -> QPixmap | None:
     return pm
 
 
+def _run_ai_model_smoke(splash, ai_manager=None) -> int:
+    from qt_app.main_window import _QtAIModelDownloadDialog, _QtAIModelLoadDialog
+
+    try:
+        if splash is not None:
+            splash.close()
+        kind = os.environ.get("FYLORRA_SMOKE_AI_KIND", "vision")
+        action = os.environ.get("FYLORRA_SMOKE_AI_ACTION", "download").strip().lower()
+        smoke_ai = ai_manager
+        if os.environ.get("FYLORRA_SMOKE_AI_DOWNLOAD_FAKE") == "1":
+            class _SmokeAI:
+                is_ready = False
+
+                def select_kind(self, _kind):
+                    return None
+
+                def ensure_model_downloaded(self, callback):
+                    for i in range(6):
+                        callback("Downloading test model", i / 5, f"{i} MB", "test speed")
+                    return True
+
+                def load_model(self, callback):
+                    for i in range(6):
+                        callback("Loading test model", i / 5, "", "")
+                    self.is_ready = True
+
+                def unload_model(self):
+                    self.is_ready = False
+
+            smoke_ai = _SmokeAI()
+        if smoke_ai is None:
+            print("FYLORRA_SMOKE_AI_DOWNLOAD failed: AI manager unavailable", flush=True)
+            return 91
+        if action in {"load", "load_unload"}:
+            dlg = _QtAIModelLoadDialog(None, ai_manager=smoke_ai, kind=kind, action="load_unload" if action == "load_unload" else "load")
+        else:
+            dlg = _QtAIModelDownloadDialog(None, ai_manager=smoke_ai, kind=kind)
+        code = dlg.exec()
+        if code == QDialog.Accepted:
+            print(f"FYLORRA_SMOKE_AI_{action.upper()} passed", flush=True)
+            return 0
+        print(f"FYLORRA_SMOKE_AI_{action.upper()} rejected: {code}", flush=True)
+        return 92
+    except Exception as e:
+        print(f"FYLORRA_SMOKE_AI_DOWNLOAD failed: {e}", flush=True)
+        return 93
+
 def run(argv: list[str]) -> int:
     _install_crash_logger()
     # High-DPI settings should be applied before QApplication is constructed.
@@ -169,10 +223,27 @@ def run(argv: list[str]) -> int:
     except Exception:
         splash = None
 
+    if os.environ.get("FYLORRA_SMOKE_AI_DOWNLOAD") == "1":
+        try:
+            from qt_app.styles import apply_app_theme
+            apply_app_theme(app, theme="dark", accent="blue")
+        except Exception:
+            pass
+        smoke_ai = None
+        if os.environ.get("FYLORRA_SMOKE_AI_DOWNLOAD_FAKE") != "1":
+            try:
+                from core.settings_manager import SettingsManager
+                from core.ai_manager import AIManager  # type: ignore
+
+                smoke_settings = SettingsManager()
+                smoke_ai = AIManager(smoke_settings.app_folder, smoke_settings)
+            except Exception:
+                smoke_ai = None
+        return _run_ai_model_smoke(splash, smoke_ai)
     from core.monitor_manager import MonitorManager
     from core.settings_manager import SettingsManager
     from qt_app.backend import FylorraBackend
-    from qt_app.main_window import FylorraQtMainWindow, _QtAIModelDownloadDialog, _QtAIModelLoadDialog
+    from qt_app.main_window import FylorraQtMainWindow
     from qt_app.styles import apply_app_theme
 
     settings_manager = SettingsManager()
@@ -195,58 +266,6 @@ def run(argv: list[str]) -> int:
     )
     backend.load()
 
-    if os.environ.get("FYLORRA_SMOKE_AI_DOWNLOAD") == "1":
-        try:
-            if splash is not None:
-                splash.close()
-            kind = os.environ.get("FYLORRA_SMOKE_AI_KIND", "vision")
-            action = os.environ.get("FYLORRA_SMOKE_AI_ACTION", "download").strip().lower()
-            smoke_ai = ai_manager
-            if os.environ.get("FYLORRA_SMOKE_AI_DOWNLOAD_FAKE") == "1":
-                class _SmokeAI:
-                    is_ready = False
-
-                    def select_kind(self, _kind):
-                        return None
-
-                    def ensure_model_downloaded(self, callback):
-                        for i in range(6):
-                            callback("Downloading test model", i / 5, f"{i} MB", "test speed")
-                        return True
-
-                    def load_model(self, callback):
-                        for i in range(6):
-                            callback("Loading test model", i / 5, "", "")
-                        self.is_ready = True
-
-                    def unload_model(self):
-                        self.is_ready = False
-
-                smoke_ai = _SmokeAI()
-            if smoke_ai is None:
-                print("FYLORRA_SMOKE_AI_DOWNLOAD failed: AI manager unavailable", flush=True)
-                return 91
-            if action in {"load", "load_unload"}:
-                dlg = _QtAIModelLoadDialog(None, ai_manager=smoke_ai, kind=kind, action="load_unload" if action == "load_unload" else "load")
-            else:
-                dlg = _QtAIModelDownloadDialog(None, ai_manager=smoke_ai, kind=kind)
-            code = dlg.exec()
-            try:
-                backend.shutdown()
-            except Exception:
-                pass
-            if code == QDialog.Accepted:
-                print(f"FYLORRA_SMOKE_AI_{action.upper()} passed", flush=True)
-                return 0
-            print(f"FYLORRA_SMOKE_AI_{action.upper()} rejected: {code}", flush=True)
-            return 92
-        except Exception as e:
-            print(f"FYLORRA_SMOKE_AI_DOWNLOAD failed: {e}", flush=True)
-            try:
-                backend.shutdown()
-            except Exception:
-                pass
-            return 93
     win = FylorraQtMainWindow(backend=backend)
     try:
         screen = app.primaryScreen()

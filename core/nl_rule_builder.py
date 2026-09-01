@@ -323,7 +323,7 @@ Return ONLY the JSON object."""
             # Call LLM - Qwen3-VL handles both text and vision excellently
             try:
                 # Use chat completion with JSON response format constraint (forces valid JSON)
-                response = self.ai_manager.model.create_chat_completion(
+                response = self.ai_manager.create_chat_completion_safe(
                     messages=[
                         {"role": "system", "content": self.RULE_GENERATION_PROMPT},
                         {"role": "user", "content": f"Convert to rule: {natural_language_input}{context_info}"},
@@ -344,7 +344,7 @@ Return ONLY the JSON object."""
 
                 try:
                     # Retry with simpler, more explicit prompt
-                    retry_response = self.ai_manager.model.create_chat_completion(
+                    retry_response = self.ai_manager.create_chat_completion_safe(
                         messages=[
                             {"role": "system", "content": "You are a JSON generator. Always return valid JSON objects."},
                             {"role": "user", "content": (

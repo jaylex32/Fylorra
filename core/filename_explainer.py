@@ -118,7 +118,7 @@ def explain_filename(file_path: Path, *, ai_manager=None) -> str:
         f"Rename event:\n{base}\n\nDetails:\n" + ("\n".join(details) if details else "None")
     )
     try:
-        resp = ai_manager.model.create_chat_completion(
+        resp = ai_manager.create_chat_completion_safe(
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
             temperature=0.3,
             max_tokens=220,

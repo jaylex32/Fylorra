@@ -564,7 +564,7 @@ class LibraryIndex:
             f"Filename: {filename}\n\n"
             f"Content:\n{snippet}\n"
         )
-        resp = ai_manager.model.create_chat_completion(
+        resp = ai_manager.create_chat_completion_safe(
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
             temperature=0.2,
             max_tokens=120,

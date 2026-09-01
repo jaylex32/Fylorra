@@ -42,7 +42,7 @@ def _ai_rewrite_query(ai_manager, user_query: str) -> Optional[str]:
     )
 
     try:
-        resp = ai_manager.model.create_chat_completion(
+        resp = ai_manager.create_chat_completion_safe(
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
             temperature=0.2,
             max_tokens=200,
@@ -203,7 +203,7 @@ def _ai_rerank(ai_manager, user_query: str, items: list[LibraryItem], *, top_n: 
     )
 
     try:
-        resp = ai_manager.model.create_chat_completion(
+        resp = ai_manager.create_chat_completion_safe(
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
             temperature=0.1,
             max_tokens=180,

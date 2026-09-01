@@ -106,7 +106,7 @@ def _ocr_image_ai(file_path: Path, *, ai_manager, lang: str | None = None) -> st
         "Extract all readable text from this image. Preserve line breaks when possible."
         f"{lang_hint} If no text is visible, return an empty string."
     )
-    response = ai_manager.model.create_chat_completion(
+    response = ai_manager.create_chat_completion_safe(
         messages=[
             {
                 "role": "user",
@@ -149,7 +149,7 @@ def _ocr_image_ai_from_pil(image, *, ai_manager, lang: str | None = None) -> str
         "Extract all readable text from this image. Preserve line breaks when possible."
         f"{lang_hint} If no text is visible, return an empty string."
     )
-    response = ai_manager.model.create_chat_completion(
+    response = ai_manager.create_chat_completion_safe(
         messages=[
             {
                 "role": "user",

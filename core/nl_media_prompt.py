@@ -282,7 +282,7 @@ def ai_audio_from_nl(ai_manager, files: list[Path], instruction: str) -> AudioNL
     )
 
     try:
-        resp = ai_manager.model.create_chat_completion(
+        resp = ai_manager.create_chat_completion_safe(
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
             temperature=0.2,
             max_tokens=500,
@@ -467,7 +467,7 @@ def ai_video_from_nl(ai_manager, files: list[Path], instruction: str) -> VideoNL
     )
 
     try:
-        resp = ai_manager.model.create_chat_completion(
+        resp = ai_manager.create_chat_completion_safe(
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
             temperature=0.2,
             max_tokens=500,

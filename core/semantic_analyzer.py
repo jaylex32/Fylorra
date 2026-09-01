@@ -297,7 +297,7 @@ Return ONLY the JSON object, no other text."""
             context = text_content[:2000]
 
             # Call LLM with structured prompt and force JSON output
-            response = self.ai_manager.model.create_chat_completion(
+            response = self.ai_manager.create_chat_completion_safe(
                 messages=[
                     {"role": "system", "content": self.SEMANTIC_ANALYSIS_PROMPT},
                     {"role": "user", "content": f"Analyze this document:\n\n{context}"}

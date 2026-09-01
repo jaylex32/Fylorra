@@ -20848,7 +20848,7 @@ class _QtWritingAssistantWorker(QObject):
             ai = self.ai_manager
             if not ai or not getattr(ai, "is_ready", False) or not getattr(ai, "model", None):
                 raise RuntimeError("AI model not loaded.")
-            response = ai.model.create_chat_completion(
+            response = ai.create_chat_completion_safe(
                 messages=self.messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
@@ -22298,7 +22298,7 @@ class _QtTextExtractWorker(QObject):
     def _ai_call(self, prompt: str, text: str) -> str:
         if not self._ai_ready():
             raise RuntimeError("AI model not loaded.")
-        response = self.ai_manager.model.create_chat_completion(
+        response = self.ai_manager.create_chat_completion_safe(
             messages=[
                 {"role": "system", "content": "You are a precise text processing assistant."},
                 {"role": "user", "content": f"{prompt}\n\n{text}"},

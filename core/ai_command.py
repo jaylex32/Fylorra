@@ -780,7 +780,7 @@ def plan_from_nl(ai_manager, instruction: str, *, target_folder: Path, allowed_t
     )
 
     try:
-        resp = ai_manager.model.create_chat_completion(
+        resp = ai_manager.create_chat_completion_safe(
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
             temperature=0.2,
             max_tokens=600,
@@ -806,7 +806,7 @@ def plan_from_nl(ai_manager, instruction: str, *, target_folder: Path, allowed_t
             f"Text to convert:\n{content}\n"
         )
         try:
-            resp2 = ai_manager.model.create_chat_completion(
+            resp2 = ai_manager.create_chat_completion_safe(
                 messages=[{"role": "user", "content": [{"type": "text", "text": repair_prompt}]}],
                 temperature=0.1,
                 max_tokens=500,

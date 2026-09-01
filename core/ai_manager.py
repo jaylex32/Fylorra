@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import threading
+import traceback
 import logging
 import re
 import subprocess
@@ -88,6 +89,7 @@ class AIManager:
         self.is_ready = False
         self.load_error = None
         self._swap_lock = threading.RLock()
+        self._model_lock = threading.RLock()
         self._profiles: dict[str, _ModelProfile] = {}
         self._active_kind: str = "vision"
 
@@ -696,7 +698,7 @@ class AIManager:
                             logger.info(f"Using AI vision for {file_path.name}...")
 
                             def run_vision_prompt(prompt_text: str) -> str:
-                                response = self.model.create_chat_completion(
+                                response = self.create_chat_completion_safe(
                                     messages=[
                                         {
                                             "role": "system",
@@ -1056,7 +1058,7 @@ class AIManager:
 Respond in JSON format:
 {"sensitive": true/false, "reason": "brief reason if sensitive, otherwise null"}"""
 
-            response = self.model.create_chat_completion(
+            response = self.create_chat_completion_safe(
                 messages=[
                     {
                         "role": "user",
@@ -1117,7 +1119,7 @@ Respond in JSON format:
 
             prompt = """Describe the text content visible in this image. If there's significant text (like a document or screenshot), extract key phrases. If it's mainly visual, describe the main subject in one sentence."""
 
-            response = self.model.create_chat_completion(
+            response = self.create_chat_completion_safe(
                 messages=[
                     {
                         "role": "user",
@@ -1177,7 +1179,7 @@ Respond in JSON format:
                 "{\"caption\":\"a red car driving on a city street at night\",\"tags\":[\"car\",\"city street\",\"night\",\"traffic\",\"street lights\"]}"
             )
 
-            response = self.model.create_chat_completion(
+            response = self.create_chat_completion_safe(
                 messages=[
                     {
                         "role": "user",
@@ -1395,7 +1397,7 @@ Respond in JSON format:
             user_msg = f"{user_msg}\n\nReturn ONLY valid JSON."
 
         temp = float(self.temperature if temperature is None else temperature)
-        response = self.model.create_chat_completion(
+        response = self.create_chat_completion_safe(
             messages=[
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_msg},
@@ -1405,14 +1407,35 @@ Respond in JSON format:
         )
         text = (response.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
         return {"ok": True, "text": text}
-
     def unload_model(self):
         """Unload model from memory"""
-        if self.model:
+        with self._model_lock:
+            if self.model:
+                try:
+                    del self.model
+                except Exception:
+                    pass
+                self.model = None
+                self.is_ready = False
+                logger.info("AI model unloaded")
+
+    def create_chat_completion_safe(self, **kwargs):
+        """
+        Serialize native llama.cpp inference and make Python-side failures visible.
+
+        llama-cpp-python wraps native code. Concurrent calls or unload-during-call
+        can terminate the process instead of raising a Python exception. This method
+        is the only supported in-process call path for AI features.
+        """
+        if not self.enabled or not self.is_ready or not self.model:
+            raise RuntimeError("AI model not loaded.")
+        with self._model_lock:
+            if not self.model or not self.is_ready:
+                raise RuntimeError("AI model not loaded.")
             try:
-                del self.model
-            except Exception:
-                pass
-            self.model = None
-            self.is_ready = False
-            logger.info("AI model unloaded")
+                return self.model.create_chat_completion(**kwargs)
+            except Exception as e:
+                self.load_error = str(e)
+                logger.error(f"AI inference failed: {e}")
+                logger.error(traceback.format_exc())
+                raise

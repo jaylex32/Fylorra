@@ -562,7 +562,7 @@ class EnhancedCategorizer:
                     "{\"label\":\"receipts_invoices|bank_statements|tax_forms|legal_contracts|resumes_cv|manuals_guides|unknown\",\"confidence\":0.0}\n"
                 )
 
-                resp = self.ai_manager.model.create_chat_completion(
+                resp = self.ai_manager.create_chat_completion_safe(
                     messages=[
                         {
                             "role": "user",
@@ -805,7 +805,7 @@ class EnhancedCategorizer:
             if not image_data:
                 return None
 
-            resp = self.ai_manager.model.create_chat_completion(
+            resp = self.ai_manager.create_chat_completion_safe(
                 messages=[
                     {
                         "role": "user",
