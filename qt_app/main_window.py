@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 import html
 import uuid
 import queue
@@ -9,7 +10,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QObject, Signal, QThread, QUrl, QEvent, QFileInfo, QRectF, QByteArray, QTimer, QDateTime, QPointF, QBuffer, QIODevice
+from PySide6.QtCore import Qt, QSize, QObject, Signal, Slot, QThread, QUrl, QEvent, QFileInfo, QRectF, QByteArray, QTimer, QDateTime, QPointF, QBuffer, QIODevice
 from PySide6.QtGui import QDesktopServices, QAction, QPixmap, QIcon, QImage, QImageReader, QPainter, QPolygonF, QColor, QTextCursor, QIntValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -66,6 +67,42 @@ from qt_app.icons import QtIconLoader
 from qt_app.pages import PageDef, build_placeholder_page
 from qt_app.signals import MonitorSignals
 from core.branding import APP_NAME, APP_WINDOW_TITLE, DEFAULT_LINKS_FOLDER_NAME
+
+
+class _GuiCallback(QObject):
+    """Run a worker signal's plain-function slot on the GUI thread.
+
+    A signal connected straight to a lambda/closure has no QObject receiver, so
+    Qt can end up running it on the worker thread that emitted it. Those slots
+    touch widgets, which is an access violation in the packaged build. Bouncing
+    the call through a real QObject slot restores the normal queued hand-off.
+    """
+
+    _fire = Signal(object)
+
+    def __init__(self, fn, parent: QObject | None = None):
+        super().__init__(parent)
+        self._fn = fn
+        self._fire.connect(self._invoke)
+
+    @Slot(object)
+    def _invoke(self, args) -> None:
+        try:
+            self._fn(*args)
+        except Exception:
+            # A failing UI update must never take the process down.
+            try:
+                sys.excepthook(*sys.exc_info())
+            except Exception:
+                pass
+
+    def __call__(self, *args) -> None:
+        self._fire.emit(args)
+
+
+def _gui_cb(owner: QObject, fn):
+    """Wrap `fn` so a worker-thread signal delivers it on the GUI thread."""
+    return _GuiCallback(fn, owner)
 
 
 def _render_svg_pixmap(svg_path: Path, size: QSize, *, viewbox: str | None = None) -> QPixmap:
@@ -2627,9 +2664,9 @@ class FylorraQtMainWindow(QMainWindow):
             except Exception:
                 pass
 
-        worker.progress.connect(on_progress)
-        worker.finished.connect(on_done)
-        worker.error.connect(on_error)
+        worker.progress.connect(_gui_cb(self, on_progress))
+        worker.finished.connect(_gui_cb(self, on_done))
+        worker.error.connect(_gui_cb(self, on_error))
         worker.finished.connect(worker.deleteLater)
         worker.error.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -4239,9 +4276,9 @@ class FylorraQtMainWindow(QMainWindow):
         worker.moveToThread(th)
         th.started.connect(worker.run)
         worker.status.connect(self._ai_search_index_status.setText)
-        worker.progress.connect(lambda p: self._ai_search_index_bar.setValue(int(max(0.0, min(1.0, p)) * 1000)))
-        worker.finished.connect(lambda n: self._ai_search_index_done(n))
-        worker.error.connect(lambda msg: self._ai_search_index_failed(msg))
+        worker.progress.connect(_gui_cb(self, lambda p: self._ai_search_index_bar.setValue(int(max(0.0, min(1.0, p)) * 1000))))
+        worker.finished.connect(_gui_cb(self, lambda n: self._ai_search_index_done(n)))
+        worker.error.connect(_gui_cb(self, lambda msg: self._ai_search_index_failed(msg)))
         worker.finished.connect(th.quit)
         worker.error.connect(th.quit)
         th.finished.connect(th.deleteLater)
@@ -4317,9 +4354,9 @@ class FylorraQtMainWindow(QMainWindow):
         th = QThread(self)
         worker.moveToThread(th)
         th.started.connect(worker.run)
-        worker.status.connect(lambda msg: self._ai_search_search_status.setText(str(msg)))
-        worker.finished.connect(lambda results: self._ai_search_results_ready(results))
-        worker.error.connect(lambda msg: self._ai_search_results_failed(msg))
+        worker.status.connect(_gui_cb(self, lambda msg: self._ai_search_search_status.setText(str(msg))))
+        worker.finished.connect(_gui_cb(self, lambda results: self._ai_search_results_ready(results)))
+        worker.error.connect(_gui_cb(self, lambda msg: self._ai_search_results_failed(msg)))
         worker.finished.connect(th.quit)
         worker.error.connect(th.quit)
         th.finished.connect(th.deleteLater)
@@ -5360,7 +5397,7 @@ class FylorraQtMainWindow(QMainWindow):
         worker.moveToThread(th)
         th.started.connect(worker.run)  # type: ignore[attr-defined]
         worker.status.connect(self._ft_status.setText)  # type: ignore[attr-defined]
-        worker.progress.connect(lambda p: self._ft_bar.setValue(int(max(0.0, min(1.0, p)) * 1000)))  # type: ignore[attr-defined]
+        worker.progress.connect(_gui_cb(self, lambda p: self._ft_bar.setValue(int(max(0.0, min(1.0, p)) * 1000))))  # type: ignore[attr-defined]
         worker.finished.connect(self._ft_worker_done)  # type: ignore[attr-defined]
         worker.error.connect(self._ft_worker_failed)  # type: ignore[attr-defined]
         worker.finished.connect(th.quit)  # type: ignore[attr-defined]
@@ -6594,14 +6631,14 @@ class FylorraQtMainWindow(QMainWindow):
 
         worker.moveToThread(th)
         th.started.connect(worker.run)  # type: ignore[attr-defined]
-        worker.status.connect(lambda msg, jid=job.job_id: self._ft_media_job_status(jid, msg))  # type: ignore[attr-defined]
-        worker.progress.connect(lambda p, jid=job.job_id: self._ft_media_job_progress(jid, p))  # type: ignore[attr-defined]
+        worker.status.connect(_gui_cb(self, lambda msg, jid=job.job_id: self._ft_media_job_status(jid, msg)))  # type: ignore[attr-defined]
+        worker.progress.connect(_gui_cb(self, lambda p, jid=job.job_id: self._ft_media_job_progress(jid, p)))  # type: ignore[attr-defined]
         try:
             worker.file_progress.connect(lambda p, f, jid=job.job_id: self._ft_media_job_file_progress(jid, p, f))  # type: ignore[attr-defined]
         except Exception:
             pass
-        worker.finished.connect(lambda msg, jid=job.job_id: self._ft_media_job_done(jid, True, msg))  # type: ignore[attr-defined]
-        worker.error.connect(lambda msg, jid=job.job_id: self._ft_media_job_done(jid, False, msg))  # type: ignore[attr-defined]
+        worker.finished.connect(_gui_cb(self, lambda msg, jid=job.job_id: self._ft_media_job_done(jid, True, msg)))  # type: ignore[attr-defined]
+        worker.error.connect(_gui_cb(self, lambda msg, jid=job.job_id: self._ft_media_job_done(jid, False, msg)))  # type: ignore[attr-defined]
         worker.finished.connect(th.quit)  # type: ignore[attr-defined]
         worker.error.connect(th.quit)  # type: ignore[attr-defined]
         th.finished.connect(th.deleteLater)
@@ -8658,7 +8695,7 @@ class FylorraQtMainWindow(QMainWindow):
         thread = QThread(dlg)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.finished.connect(lambda ok, msg: self._settings_on_smtp_test_done(dlg, btns, st, ok, msg))
+        worker.finished.connect(_gui_cb(self, lambda ok, msg: self._settings_on_smtp_test_done(dlg, btns, st, ok, msg)))
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -9497,10 +9534,10 @@ class FylorraQtMainWindow(QMainWindow):
                 except Exception:
                     pass
 
-            worker.status.connect(lambda s: (self._cloud_status.setText(s), _set_job_status(str(s)[:240] if s else "Working…")))
+            worker.status.connect(_gui_cb(self, lambda s: (self._cloud_status.setText(s), _set_job_status(str(s)[:240] if s else "Working…"))))
             if status_sink is not None:
                 try:
-                    worker.status.connect(status_sink)
+                    worker.status.connect(_gui_cb(self, status_sink))
                 except Exception:
                     pass
 
@@ -9535,10 +9572,10 @@ class FylorraQtMainWindow(QMainWindow):
                 except Exception:
                     pass
 
-            worker.progress.connect(_on_prog)
+            worker.progress.connect(_gui_cb(self, _on_prog))
             if progress_sink is not None:
                 try:
-                    worker.progress.connect(progress_sink)
+                    worker.progress.connect(_gui_cb(self, progress_sink))
                 except Exception:
                     pass
 
@@ -9567,8 +9604,8 @@ class FylorraQtMainWindow(QMainWindow):
                 else:
                     QMessageBox.critical(self, "Cloud Sync", msg)
 
-            worker.finished.connect(_finish_ok)
-            worker.error.connect(_finish_err)
+            worker.finished.connect(_gui_cb(self, _finish_ok))
+            worker.error.connect(_gui_cb(self, _finish_err))
 
             worker.finished.connect(thread.quit)
             worker.error.connect(thread.quit)
@@ -12132,8 +12169,8 @@ class FylorraQtMainWindow(QMainWindow):
         worker.moveToThread(th)
         th.started.connect(worker.run)
         worker.status.connect(self._ws_status.setText)
-        worker.log.connect(lambda m: self._ws_log.insertItem(0, QListWidgetItem(m)))
-        worker.progress.connect(lambda p: self._ws_bar.setValue(int(max(0.0, min(1.0, p)) * 1000)))
+        worker.log.connect(_gui_cb(self, lambda m: self._ws_log.insertItem(0, QListWidgetItem(m))))
+        worker.progress.connect(_gui_cb(self, lambda p: self._ws_bar.setValue(int(max(0.0, min(1.0, p)) * 1000))))
         worker.review_requested.connect(self._ws_review_requested)
         worker.finished.connect(self._ws_done)
         worker.error.connect(self._ws_failed)
@@ -16530,8 +16567,8 @@ class _FtpRemoteBrowserDialog(QDialog):
             except Exception:
                 pass
 
-        worker.finished.connect(_done)
-        worker.error.connect(_err)
+        worker.finished.connect(_gui_cb(self, _done))
+        worker.error.connect(_gui_cb(self, _err))
         thread.started.connect(worker.run)
         worker.finished.connect(thread.quit)
         worker.error.connect(thread.quit)
@@ -17998,7 +18035,7 @@ class _QtAiHubRunDialog(QDialog):
         self.worker.moveToThread(self._thread)
         self._thread.started.connect(self.worker.run)
         self.worker.status.connect(self.status.setText)
-        self.worker.progress.connect(lambda p: self.bar.setValue(int(p * 1000)))
+        self.worker.progress.connect(_gui_cb(self, lambda p: self.bar.setValue(int(p * 1000))))
         self.worker.log.connect(self._append_log)
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
@@ -18785,7 +18822,7 @@ class _QtAiHubApplyCategorizeDialog(QDialog):
         self.worker.moveToThread(self._thread)
         self._thread.started.connect(self.worker.run)
         self.worker.status.connect(self.status.setText)
-        self.worker.progress.connect(lambda p: self.bar.setValue(int(p * 1000)))
+        self.worker.progress.connect(_gui_cb(self, lambda p: self.bar.setValue(int(p * 1000))))
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
         self.worker.finished.connect(self._thread.quit)
@@ -19163,7 +19200,7 @@ class _QtAutoCategorizeDialog(QDialog):
         self.worker.moveToThread(self._thread)
         self._thread.started.connect(self.worker.run)
         self.worker.status.connect(self.subtitle.setText)
-        self.worker.progress.connect(lambda p: self.bar.setValue(int(p * 1000)))
+        self.worker.progress.connect(_gui_cb(self, lambda p: self.bar.setValue(int(p * 1000))))
         self.worker.finished.connect(self._on_run_finished)
         self.worker.error.connect(self._on_run_error)
         self.worker.finished.connect(self._thread.quit)
@@ -19697,7 +19734,7 @@ class _QtSmartRenameDialog(QDialog):
         self.worker.moveToThread(self._thread)
         self._thread.started.connect(self.worker.run)
         self.worker.status.connect(self.subtitle.setText)
-        self.worker.progress.connect(lambda p: self.bar.setValue(int(p * 1000)))
+        self.worker.progress.connect(_gui_cb(self, lambda p: self.bar.setValue(int(p * 1000))))
         self.worker.finished.connect(self._on_scan_finished)
         self.worker.error.connect(self._on_scan_error)
         self.worker.finished.connect(self._thread.quit)
@@ -19751,7 +19788,7 @@ class _QtSmartRenameDialog(QDialog):
         self.apply_worker.moveToThread(self._apply_thread)
         self._apply_thread.started.connect(self.apply_worker.run)
         self.apply_worker.status.connect(self.subtitle.setText)
-        self.apply_worker.progress.connect(lambda p: self.bar.setValue(int(p * 1000)))
+        self.apply_worker.progress.connect(_gui_cb(self, lambda p: self.bar.setValue(int(p * 1000))))
         self.apply_worker.finished.connect(self._on_apply_finished)
         self.apply_worker.error.connect(self._on_apply_error)
         self.apply_worker.finished.connect(self._apply_thread.quit)
@@ -20051,7 +20088,7 @@ class _QtContentAnalysisDialog(QDialog):
         self.worker.moveToThread(self._thread)
         self._thread.started.connect(self.worker.run)
         self.worker.status.connect(self.subtitle.setText)
-        self.worker.progress.connect(lambda p: self.bar.setValue(int(p * 1000)))
+        self.worker.progress.connect(_gui_cb(self, lambda p: self.bar.setValue(int(p * 1000))))
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
         self.worker.finished.connect(self._thread.quit)
@@ -20739,7 +20776,7 @@ class _QtAICommandRunDialog(QDialog):
         self.worker.moveToThread(self._thread)
         self._thread.started.connect(self.worker.run)
         self.worker.status.connect(self._on_status)
-        self.worker.progress.connect(lambda p: self.bar.setValue(int(max(0.0, min(1.0, p)) * 1000)))
+        self.worker.progress.connect(_gui_cb(self, lambda p: self.bar.setValue(int(max(0.0, min(1.0, p)) * 1000))))
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
         self.worker.finished.connect(self._thread.quit)
@@ -23594,7 +23631,7 @@ class _QtLibreOfficeDownloadDialog(QDialog):
         self.worker.moveToThread(self._thread)
         self._thread.started.connect(self.worker.run)
         self.worker.status.connect(self.status.setText)
-        self.worker.progress.connect(lambda p: self.bar.setValue(int(max(0.0, min(1.0, p)) * 1000)))
+        self.worker.progress.connect(_gui_cb(self, lambda p: self.bar.setValue(int(max(0.0, min(1.0, p)) * 1000))))
         self.worker.finished.connect(self._on_done)
         self.worker.error.connect(self._on_error)
         self.worker.finished.connect(self._thread.quit)
@@ -23765,7 +23802,7 @@ class _QtFfmpegToolsDownloadDialog(QDialog):
         self.worker.moveToThread(self._thread)
         self._thread.started.connect(self.worker.run)
         self.worker.status.connect(self.status.setText)
-        self.worker.progress.connect(lambda p: self.bar.setValue(int(max(0.0, min(1.0, p)) * 1000)))
+        self.worker.progress.connect(_gui_cb(self, lambda p: self.bar.setValue(int(max(0.0, min(1.0, p)) * 1000))))
         self.worker.finished.connect(self._on_done)
         self.worker.error.connect(self._on_error)
         self.worker.finished.connect(self._thread.quit)
