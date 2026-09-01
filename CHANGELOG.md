@@ -5,6 +5,34 @@ All notable changes to Fylorra are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.9] - 2026-09-01
+
+### Added
+
+- Device transfers are now encrypted. Each device keeps its own certificate and
+  remembers the one a peer presented the first time they connected, so the
+  access code and the files themselves are no longer readable by anything
+  between the two devices. This matters most when transferring over the internet
+  through a forwarded port, where the previous plain connection was exposed.
+- If a device you have transferred to before presents a different identity, the
+  transfer stops and explains why instead of continuing. That is expected after
+  reinstalling on the other device, and it can be accepted deliberately.
+
+### Changed
+
+- Transfers are substantially faster. Over a connection with typical internet
+  latency, sending many small files is around twenty times quicker, and larger
+  files around five times quicker. Every file used to open its own connection
+  and wait before sending; a transfer now reuses one connection and shares that
+  wait across the whole run.
+- A wrong access code is now reported as a wrong access code at any file size.
+  Previously anything larger than about half a megabyte only showed a dropped
+  connection, and the file was uploaded before being rejected.
+
+### Fixed
+
+- Transfers no longer fail intermittently on higher-latency connections.
+
 ## [v0.1.8] - 2026-09-01
 
 ### Changed
@@ -92,6 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and macOS Intel, with automated GitHub release publishing.
 - README screenshots captured from the running app.
 
+[v0.1.9]: https://github.com/jaylex32/Fylorra/releases/tag/v0.1.9
 [v0.1.8]: https://github.com/jaylex32/Fylorra/releases/tag/v0.1.8
 [v0.1.7]: https://github.com/jaylex32/Fylorra/releases/tag/v0.1.7
 [v0.1.6]: https://github.com/jaylex32/Fylorra/releases/tag/v0.1.6
