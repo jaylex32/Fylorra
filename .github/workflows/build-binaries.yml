@@ -24,7 +24,7 @@ jobs:
           - name: Windows x64
             os: windows-latest
             artifact: Fylorra-Windows-x64
-            binary: dist/Fylorra.exe
+            binary: dist/Fylorra/Fylorra.exe
           - name: Linux x64
             os: ubuntu-latest
             artifact: Fylorra-Linux-x64
@@ -85,7 +85,15 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Compress-Archive -Path "${{ matrix.binary }}" -DestinationPath "release/${{ matrix.artifact }}.zip" -Force
+          # The one-dir tree is ~2.6GB uncompressed; Compress-Archive is slow and
+          # unreliable at that size, so prefer 7-Zip (preinstalled on the runner).
+          $zip = "release/${{ matrix.artifact }}.zip"
+          if (Get-Command 7z -ErrorAction SilentlyContinue) {
+            7z a -tzip -mx=5 "$zip" "dist/Fylorra" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "7z failed with exit code $LASTEXITCODE" }
+          } else {
+            Compress-Archive -Path "dist/Fylorra" -DestinationPath "$zip" -Force
+          }
 
       - name: Install NSIS
         if: runner.os == 'Windows'

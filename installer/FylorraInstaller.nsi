@@ -6,7 +6,7 @@
 !define APP_PUBLISHER "Fylorra"
 !define APP_EXE "Fylorra.exe"
 !define APP_ID "Fylorra.FileIntakeAutomation"
-!define SOURCE_EXE "..\dist\Fylorra.exe"
+!define SOURCE_DIR "..\dist\Fylorra"
 !define ICON_FILE "..\assets\fylorra.ico"
 !define SIDEBAR_BITMAP "installer_sidebar.bmp"
 !define INSTALL_DIR "$LOCALAPPDATA\Programs\Fylorra"
@@ -48,7 +48,8 @@ VIAddVersionKey "LegalCopyright" "${APP_PUBLISHER}"
 
 Section "Install ${APP_NAME}" SecInstall
   SetOutPath "$INSTDIR"
-  File "${SOURCE_EXE}"
+  ; Lay down the full application tree (exe, Qt runtime, DLLs, assets, tools).
+  File /r "${SOURCE_DIR}\*"
 
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\${APP_ID}" "InstallDir" "$INSTDIR"
@@ -74,8 +75,10 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\${APP_NAME}\Uninstall ${APP_NAME}.lnk"
   RMDir "$SMPROGRAMS\${APP_NAME}"
 
-  Delete "$INSTDIR\${APP_EXE}"
   Delete "$INSTDIR\Uninstall.exe"
+  ; Remove the installed application tree.
+  RMDir /r "$INSTDIR\_internal"
+  Delete "$INSTDIR\${APP_EXE}"
   RMDir "$INSTDIR"
 
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"

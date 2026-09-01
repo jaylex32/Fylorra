@@ -5,6 +5,22 @@ All notable changes to Fylorra are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.8] - 2026-09-01
+
+### Changed
+
+- The Windows setup installer now performs a real installation. Previously it
+  copied a single self-extracting executable into the chosen folder, so nothing
+  was actually installed there and the whole application had to unpack itself to
+  a temporary directory on every launch. The Windows build is now a one-directory
+  build, so the wizard writes the complete application - executable, Qt runtime,
+  libraries, assets and bundled tools - into the directory you select.
+- Windows startup is significantly faster, because launching no longer unpacks
+  the full application first.
+- The Windows portable download is now a folder rather than a single executable.
+  Extract it and run `Fylorra.exe` inside. Linux and macOS downloads are unchanged.
+- Uninstalling now removes the full installed application directory.
+
 ## [v0.1.7] - 2026-08-31
 
 ### Fixed
@@ -76,6 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and macOS Intel, with automated GitHub release publishing.
 - README screenshots captured from the running app.
 
+[v0.1.8]: https://github.com/jaylex32/Fylorra/releases/tag/v0.1.8
 [v0.1.7]: https://github.com/jaylex32/Fylorra/releases/tag/v0.1.7
 [v0.1.6]: https://github.com/jaylex32/Fylorra/releases/tag/v0.1.6
 [v0.1.5]: https://github.com/jaylex32/Fylorra/releases/tag/v0.1.5
