@@ -63,12 +63,22 @@ jobs:
       - name: Compile check
         run: python -m py_compile main_qt.py qt_app/main_window.py qt_app/backend.py core/device_transfer.py utils/notification_manager.py
 
+      - name: Smoke tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest tests.test_ai_stability -v
+
       - name: Build with PyInstaller
         run: pyinstaller --clean --noconfirm Fylorra.spec
 
       - name: Verify binary exists
         shell: bash
         run: test -e "${{ matrix.binary }}"
+
+      - name: Packaged AI dialog smoke tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tests/packaged_ai_smoke.py "${{ matrix.binary }}"
 
       - name: Package Windows portable artifact
         if: runner.os == 'Windows'
