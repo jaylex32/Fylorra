@@ -7,14 +7,29 @@ import re
 import logging
 import hashlib
 import filecmp
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass
 from slugify import slugify
 from nameparser import HumanName
-import Levenshtein
+
+try:
+    import Levenshtein
+except Exception:
+    Levenshtein = None
 
 logger = logging.getLogger(__name__)
+
+
+def _name_similarity(left: str, right: str) -> float:
+    """Return a stable filename similarity score even without optional native deps."""
+    if Levenshtein is not None:
+        try:
+            return float(Levenshtein.ratio(left, right))
+        except Exception:
+            logger.debug("Levenshtein similarity failed; using SequenceMatcher", exc_info=True)
+    return SequenceMatcher(None, str(left or ""), str(right or "")).ratio()
 
 
 @dataclass
@@ -170,7 +185,7 @@ class SmartDuplicateDetector:
             )
 
         # Calculate name similarity
-        similarity = Levenshtein.ratio(existing_path.stem, new_name)
+        similarity = _name_similarity(existing_path.stem, new_name)
 
         # If AI context available, check content similarity
         is_content_duplicate = False
